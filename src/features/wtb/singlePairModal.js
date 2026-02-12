@@ -59,7 +59,7 @@ export function registerSinglePairModal(client) {
       if (interaction.isModalSubmit() && interaction.customId === MODAL_SINGLE) {
         await interaction.deferReply({ ephemeral: true });
 
-        const sku = interaction.fields.getTextInputValue("sku").trim();
+        const sku = interaction.fields.getTextInputValue("sku").trim().toUpperCase();
         const size = interaction.fields.getTextInputValue("size").trim();
         const minPrice = toNumberOrNull(interaction.fields.getTextInputValue("min"));
         const maxPrice = toNumberOrNull(interaction.fields.getTextInputValue("max"));
