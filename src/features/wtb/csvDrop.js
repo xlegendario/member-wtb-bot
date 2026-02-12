@@ -24,34 +24,62 @@ function normalizeCsvRow(row) {
   return { ok: true, data: { sku, size, minPrice, maxPrice } };
 }
 
+async function safeDelete(msg) {
+  try { await msg.delete(); } catch {}
+}
+
+async function safeDM(user, content) {
+  try { await user.send(content); } catch {
+    // User has DMs closed. Nothing we can do except maybe log.
+  }
+}
+
 export function registerCsvDropHandler(client) {
   client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    if (message.channelId !== CONFIG.wtbChannelId) return;
+
+    const attachment = [...message.attachments.values()]
+      .find(a => (a.name || a.filename || "").toLowerCase().endsWith(".csv"));
+
+    if (!attachment) return;
+
+    // Optional: bot status message, auto-deleted
+    const statusMsg = await message.channel.send(`⏳ Processing CSV for <@${message.author.id}>...`).catch(() => null);
+
     try {
-      if (message.author.bot) return;
-      if (message.channelId !== CONFIG.wtbChannelId) return;
-
-      const attachment = [...message.attachments.values()]
-        .find(a => (a.name || a.filename || "").toLowerCase().endsWith(".csv"));
-
-      if (!attachment) return;
-
+      // Lookup seller
       const sellerRecordId = await findSellerRecordIdByDiscordId(message.author.id);
       if (!sellerRecordId) {
-        await message.reply("❌ Your Discord ID is not found in **Sellers Database**. Please register first.");
+        // Delete the CSV message so it isn't visible
+        await safeDelete(message);
+        if (statusMsg) await safeDelete(statusMsg);
+
+        await safeDM(
+          message.author,
+          "❌ Your Discord ID is not found in **Sellers Database**. Please register first, then re-upload your CSV."
+        );
         return;
       }
 
-      // Download CSV first
+      // Download CSV (before deletion)
       const res = await fetch(attachment.url);
       if (!res.ok) {
-        await message.reply(`❌ Failed to download CSV (${res.status}).`);
+        await safeDelete(message);
+        if (statusMsg) await safeDelete(statusMsg);
+
+        await safeDM(message.author, `❌ Failed to download your CSV (HTTP ${res.status}). Please try again.`);
         return;
       }
       const csvText = await res.text();
 
+      // Parse
       const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
       if (parsed.errors?.length) {
-        await message.reply(`❌ CSV parse error: ${parsed.errors[0].message}`);
+        await safeDelete(message);
+        if (statusMsg) await safeDelete(statusMsg);
+
+        await safeDM(message.author, `❌ CSV parse error: ${parsed.errors[0].message}`);
         return;
       }
 
@@ -65,22 +93,28 @@ export function registerCsvDropHandler(client) {
         else rejected.push(`Row ${i + 2}: ${nr.reason}`);
       }
 
+      // Create records
       const created = await createWtbBatch({ sellerRecordId, rows: accepted });
 
-      // Delete CSV message after success
-      await message.delete().catch(() => null);
+      // Always delete CSV message after processing
+      await safeDelete(message);
+      if (statusMsg) await safeDelete(statusMsg);
 
+      // DM summary (private)
       const lines = [
-        `✅ CSV imported for <@${message.author.id}>`,
+        "✅ **CSV import complete**",
         `• Created: **${created}**`,
-        `• Rejected: **${rejected.length}**${rejected.length ? ` (showing up to 10)` : ""}`
+        `• Rejected: **${rejected.length}**`
       ];
-      if (rejected.length) lines.push("```" + rejected.slice(0, 10).join("\n") + "```");
+      if (rejected.length) lines.push("```" + rejected.slice(0, 15).join("\n") + "```");
 
-      await message.channel.send(lines.join("\n"));
+      await safeDM(message.author, lines.join("\n"));
     } catch (e) {
-      console.error(e);
-      try { await message.reply(`❌ Import failed: ${e.message}`); } catch {}
+      // Ensure the channel stays clean even on crash
+      await safeDelete(message);
+      if (statusMsg) await safeDelete(statusMsg);
+
+      await safeDM(message.author, `❌ Import failed: ${e.message}`);
     }
   });
 }
