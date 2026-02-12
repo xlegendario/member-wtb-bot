@@ -9,6 +9,7 @@ export async function postWtbEmbedToChannel(client) {
 
   const embed = new EmbedBuilder()
     .setTitle("📥 Member WTB Upload")
+    .setColor(0xffed00);
     .setDescription(
       [
         "**Add WTBs in 2 ways:**",
