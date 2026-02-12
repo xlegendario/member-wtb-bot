@@ -30,7 +30,8 @@ export async function createWtbBatch({ sellerRecordId, rows }) {
         "Size": r.size,
         "Min Price": r.minPrice ?? undefined,
         "Max Price": r.maxPrice ?? undefined,
-        "Seller": sellerRecordId ? [sellerRecordId] : undefined
+        "Seller": sellerRecordId ? [sellerRecordId] : undefined,
+        "Date": new Date().toISOString()
       }
     }));
 
