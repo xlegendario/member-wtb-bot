@@ -29,7 +29,7 @@ export async function postWtbEmbedToChannel(client) {
       .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
-      .setLabel("⬇️ Download CSV Template")
+      .setLabel("Download CSV Template")
       .setStyle(ButtonStyle.Link)
       .setURL(templateUrl)
   );
