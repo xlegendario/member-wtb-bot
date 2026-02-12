@@ -14,9 +14,9 @@ export async function postWtbEmbedToChannel(client) {
         "**Add WTBs in 2 ways:**",
         "",
         "1) Click **➕ Add Single Pair**",
-        "2) Drop a **CSV** in this channel (**it will be deleted after processing**)",
+        "2) Drop a **CSV** in this channel, using the template below",
         "",
-        "**CSV headers required:** `SKU, Size, Min Price, Max Price`"
+        "**All CSV headers required:** `SKU, Size, Min Price, Max Price`"
       ].join("\n")
     );
 
