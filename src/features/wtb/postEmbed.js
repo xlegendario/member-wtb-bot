@@ -3,13 +3,6 @@ import { CONFIG } from "../../config.js";
 
 export const BTN_SINGLE = "wtb_single_btn";
 
-function templateCsv() {
-  return `SKU,Size,Min Price,Max Price
-DD1391-100,42,180,220
-FQ8138-002,44.5,210,260
-`;
-}
-
 export async function postWtbEmbedToChannel(client) {
   const channel = await client.channels.fetch(CONFIG.wtbChannelId).catch(() => null);
   if (!channel || !channel.isTextBased()) throw new Error("WTB channel not found or not text-based");
@@ -23,21 +16,26 @@ export async function postWtbEmbedToChannel(client) {
         "1) Click **➕ Add Single Pair**",
         "2) Drop a **CSV** in this channel (**it will be deleted after processing**)",
         "",
-        "**CSV headers required:** `SKU, Size, Min Price, Max Price`",
-        "Template attached below."
+        "**CSV headers required:** `SKU, Size, Min Price, Max Price`"
       ].join("\n")
     );
+
+  const templateUrl = `${CONFIG.publicBaseUrl}/wtb_template.csv`;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(BTN_SINGLE)
       .setLabel("➕ Add Single Pair")
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setLabel("⬇️ Download CSV Template")
+      .setStyle(ButtonStyle.Link)
+      .setURL(templateUrl)
   );
 
   await channel.send({
     embeds: [embed],
-    components: [row],
-    files: [{ attachment: Buffer.from(templateCsv(), "utf-8"), name: "wtb_template.csv" }]
+    components: [row]
   });
 }
