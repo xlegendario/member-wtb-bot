@@ -7,7 +7,9 @@ export const CONFIG = {
 
   wtbTable: process.env.AIRTABLE_WTB_TABLE || "Member WTBs",
   sellersTable: process.env.AIRTABLE_SELLERS_TABLE || "Sellers Database",
-  sellersDiscordIdField: process.env.AIRTABLE_SELLERS_DISCORD_ID_FIELD || "Discord ID"
+  sellersDiscordIdField: process.env.AIRTABLE_SELLERS_DISCORD_ID_FIELD || "Discord ID",
+
+  publicBaseUrl: process.env.PUBLIC_BASE_URL
 };
 
 export function assertConfig() {
@@ -16,6 +18,7 @@ export function assertConfig() {
     ["WTB_CHANNEL_ID", CONFIG.wtbChannelId],
     ["AIRTABLE_API_KEY", CONFIG.airtableApiKey],
     ["AIRTABLE_BASE_ID", CONFIG.airtableBaseId],
+    ["PUBLIC_BASE_URL", CONFIG.publicBaseUrl]
   ];
 
   const missing = required.filter(([, v]) => !v).map(([k]) => k);
