@@ -1,3 +1,13 @@
+import { base } from "./client.js";
+import { CONFIG } from "../config.js";
+
+export function toNumberOrNull(v) {
+  const s = (v ?? "").toString().trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function createSingleWtb({ sellerRecordId, sku, size, minPrice, maxPrice }) {
   await base(CONFIG.wtbTable).create([{
     fields: {
