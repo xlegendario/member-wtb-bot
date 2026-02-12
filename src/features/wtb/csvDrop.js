@@ -9,7 +9,7 @@ function norm(v) {
 }
 
 function normalizeCsvRow(row) {
-  const sku = norm(row.SKU ?? row.sku ?? row.Sku);
+  const sku = norm(row.SKU ?? row.sku ?? row.Sku).toUpperCase();
   const size = norm(row.Size ?? row.size ?? row.SIZE);
 
   const minPrice = toNumberOrNull(row["Min Price"] ?? row.MinPrice ?? row.min_price ?? row.min);
