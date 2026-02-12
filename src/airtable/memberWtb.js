@@ -15,7 +15,8 @@ export async function createSingleWtb({ sellerRecordId, sku, size, minPrice, max
       "Size": size,
       "Min Price": minPrice ?? undefined,
       "Max Price": maxPrice ?? undefined,
-      "Seller": sellerRecordId ? [sellerRecordId] : undefined
+      "Seller": sellerRecordId ? [sellerRecordId] : undefined,
+      "Date": new Date().toISOString()
     }
   }]);
 }
