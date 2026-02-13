@@ -102,22 +102,13 @@ export function registerMemberWtbQuickDealCreate(app, client) {
           `**Brand:** ${brandText || "—"}`
         )
         .addFields(
-          {
-            name: "Current Payout",
-            value: currentPayout != null ? `€${currentPayout}` : "—",
-            inline: true
-          },
-          {
-            name: "Max Payout",
-            value: maxPayout != null ? `€${maxPayout}` : "—",
-            inline: true
-          },
-          {
-            name: "Time to Max Payout",
-            value: timeToMaxPayout || "—",
-            inline: false
-          }
+          { name: "Current Payout (Margin/VAT21)", value: currentPayout != null ? `€${currentPayout}` : "—", inline: true },
+          { name: "Max Payout (Margin/VAT21)", value: maxPayout != null ? `€${maxPayout}` : "—", inline: true },
+          { name: "Current Payout (VAT0)", value: currentPayoutVat0 != null ? `€${currentPayoutVat0}` : "—", inline: true },
+          { name: "Max Payout (VAT0)", value: maxPayoutVat0 != null ? `€${maxPayoutVat0}` : "—", inline: true },
+          { name: "Time to Max Payout", value: timeToMaxPayout || "—", inline: false }
         );
+        
 
       if (imageUrl) embed.setImage(imageUrl);
 
