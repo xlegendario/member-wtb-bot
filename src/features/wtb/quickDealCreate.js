@@ -15,18 +15,41 @@ function normalizeBrand(brand) {
   return "other";
 }
 
+function getBrandText(brand) {
+  if (!brand) return "";
+  if (typeof brand === "string") return brand;
+
+  // Single select style: { name: "Nike" }
+  if (typeof brand === "object" && brand.name) return String(brand.name);
+
+  // Linked/lookup style: [{ name: "Nike" }] or ["Nike"]
+  if (Array.isArray(brand) && brand.length) {
+    const first = brand[0];
+    if (typeof first === "string") return first;
+    if (first && typeof first === "object" && first.name) return String(first.name);
+    return String(first);
+  }
+
+  return String(brand);
+}
+
+
 const MEMBER_WTB_DEFAULT_CHANNEL_ID =
   process.env.MEMBER_WTB_QUICK_DEALS_DEFAULT_CHANNEL_ID;
 
 const MEMBER_WTB_BRAND_CHANNEL_MAP = (() => {
   try {
-    return new Map(Object.entries(
-      JSON.parse(process.env.MEMBER_WTB_QUICK_DEALS_BRAND_CHANNEL_MAP || "{}")
-    ));
+    const obj = JSON.parse(process.env.MEMBER_WTB_QUICK_DEALS_BRAND_CHANNEL_MAP || "{}");
+    const map = new Map();
+    for (const [k, v] of Object.entries(obj)) {
+      map.set(normalizeBrand(k), String(v).trim());
+    }
+    return map;
   } catch {
     return new Map();
   }
 })();
+
 
 function pickMemberWtbChannelId(brand) {
   const key = normalizeBrand(brand);
@@ -56,7 +79,9 @@ export function registerMemberWtbQuickDealCreate(app, client) {
         return res.status(400).send("Missing recordId / sku / size");
       }
 
-      const channelId = pickMemberWtbChannelId(brand);
+      const brandText = getBrandText(brand);
+      const channelId = pickMemberWtbChannelId(brandText);
+
       if (!channelId) {
         return res.status(400).send("No Member WTB Quick Deal channel resolved");
       }
@@ -74,7 +99,7 @@ export function registerMemberWtbQuickDealCreate(app, client) {
         .setDescription(
           `**SKU:** ${String(sku).trim().toUpperCase()}\n` +
           `**Size:** ${String(size).trim()}\n` +
-          `**Brand:** ${brand || "—"}`
+          `**Brand:** ${brandText || "—"}`
         )
         .addFields(
           {
