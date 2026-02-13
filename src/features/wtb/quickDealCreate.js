@@ -43,7 +43,7 @@ function fmtMoney(v) {
 }
 
 function payoutLine(margin, vat0) {
-  return `${fmtMoney(margin)} (Margin/VAT21) / ${fmtMoney(vat0)} (VAT0)`;
+  return `${fmtMoney(margin)} (Margin) / ${fmtMoney(vat0)} (VAT0)`;
 }
 
 const MEMBER_WTB_DEFAULT_CHANNEL_ID =
