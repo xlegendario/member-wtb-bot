@@ -1,6 +1,9 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { CONFIG } from "../../config.js";
 
+export const BTN_SINGLE = "member_wtb_add_single_pair";
+export const EMBED_TITLE = "📥 Member WTB Upload";
+
 export async function postWtbEmbedToChannel(client) {
   const guild = await client.guilds.fetch(CONFIG.guildId);
   const channel = await guild.channels.fetch(CONFIG.wtbChannelId);
@@ -10,9 +13,8 @@ export async function postWtbEmbedToChannel(client) {
     return;
   }
 
-  // --- Build embed + buttons (keep your exact wording if you want) ---
   const embed = new EmbedBuilder()
-    .setTitle("📥 Member WTB Upload")
+    .setTitle(EMBED_TITLE)
     .setColor(0xffed00)
     .setDescription(
       "**Add WTBs in 2 ways:**\n\n" +
@@ -23,7 +25,7 @@ export async function postWtbEmbedToChannel(client) {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("member_wtb_add_single_pair")
+      .setCustomId(BTN_SINGLE)
       .setLabel("Add Single Pair")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
@@ -32,7 +34,6 @@ export async function postWtbEmbedToChannel(client) {
       .setURL(`${CONFIG.publicBaseUrl.replace(/\/$/, "")}/wtb_template.csv`)
   );
 
-  // --- 1) Try to reuse pinned header message ---
   let headerMsg = null;
 
   try {
@@ -40,27 +41,25 @@ export async function postWtbEmbedToChannel(client) {
     headerMsg =
       pinned.find((m) =>
         m.author?.id === client.user.id &&
-        m.embeds?.[0]?.title === "📥 Member WTB Upload"
+        m.embeds?.[0]?.title === EMBED_TITLE
       ) || null;
   } catch (e) {
     console.warn("Could not fetch pinned messages (missing permission?)", e?.message);
   }
 
-  // --- 2) If no pinned header found, try to find an existing one in recent history ---
   if (!headerMsg) {
     try {
       const recent = await channel.messages.fetch({ limit: 25 });
       headerMsg =
         recent.find((m) =>
           m.author?.id === client.user.id &&
-          m.embeds?.[0]?.title === "📥 Member WTB Upload"
+          m.embeds?.[0]?.title === EMBED_TITLE
         ) || null;
     } catch (e) {
       console.warn("Could not fetch recent messages", e?.message);
     }
   }
 
-  // --- 3) Edit if found, else send new and pin it ---
   if (headerMsg) {
     await headerMsg.edit({ embeds: [embed], components: [row] });
     return;
@@ -68,7 +67,6 @@ export async function postWtbEmbedToChannel(client) {
 
   const sent = await channel.send({ embeds: [embed], components: [row] });
 
-  // Pin it (requires Manage Messages permission)
   try {
     await sent.pin();
   } catch (e) {
