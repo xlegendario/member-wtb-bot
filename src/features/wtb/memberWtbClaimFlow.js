@@ -620,7 +620,7 @@ export function registerMemberWtbClaimFlow(client) {
         vatType: data.vatType,
     
         // Product
-        sku: String(rec.get("SKU (Master)") || rec.get("SKU") || "").trim(),
+        sku: String(rec.get("SKU (API)") || rec.get("SKU") || "").trim(),
         size: String(rec.get("Size") || "").trim(),
         brand: getBrandText(rec.get("Brand")),
     
