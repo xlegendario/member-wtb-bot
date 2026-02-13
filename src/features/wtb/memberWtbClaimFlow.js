@@ -1,3 +1,4 @@
+let __memberWtbClaimFlowRegistered = false;
 import {
   Events,
   ChannelType,
@@ -135,6 +136,8 @@ function toNumber(v) {
 
 
 export function registerMemberWtbClaimFlow(client) {
+  if (__memberWtbClaimFlowRegistered) return;
+  __memberWtbClaimFlowRegistered = true;
   // Runtime state
   const sellerMap = new Map(); // channelId -> claim context
   const uploadedImagesMap = new Map(); // channelId -> [urls]
@@ -190,10 +193,36 @@ export function registerMemberWtbClaimFlow(client) {
 
       // Load WTB record (so we can compute Locked Payout)
       const wtbRec = await base(WTB_TABLE).find(recordId);
+      // ✅ idempotency: if already claimed, do NOT create another channel
+      const existingClaimedChannelId = String(wtbRec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
+      const existingStatus = String(wtbRec.get(FIELD_FULFILLMENT_STATUS) || "").trim();
+      
+      if (existingClaimedChannelId && existingStatus === "Claim Processing") {
+        return interaction.editReply(
+          `⚠️ This deal is already being processed in <#${existingClaimedChannelId}>.`
+        );
+      }
 
-      const sku = String(wtbRec.get("SKU") || "").trim();
-      const size = String(wtbRec.get("Size") || "").trim();
-      const brand = getBrandText(wtbRec.get("Brand"));
+      function asText(v) {
+        if (v == null) return "";
+        if (typeof v === "string") return v;
+        if (typeof v === "number") return String(v);
+        if (Array.isArray(v)) {
+          if (!v.length) return "";
+          const first = v[0];
+          if (first == null) return "";
+          if (typeof first === "string" || typeof first === "number") return String(first);
+          if (typeof first === "object" && first.name) return String(first.name);
+          if (typeof first === "object" && first.text) return String(first.text);
+          return String(first);
+        }
+        if (typeof v === "object" && v.name) return String(v.name);
+        return String(v);
+      }
+      
+      const sku = asText(wtbRec.get("SKU")).trim();
+      const size = asText(wtbRec.get("Size")).trim();
+      const brand = asText(wtbRec.get("Brand")).trim();
 
       // --- LOCK PAYOUT HERE ---
       // Read CURRENT payouts (these should be populated by Make / your system)
@@ -258,6 +287,12 @@ export function registerMemberWtbClaimFlow(client) {
             `**VAT Type:** ${vatType}\n` +
             `**Seller (claimed with):** ${sellerId}`
         );
+
+      const pic = wtbRec.get(FIELD_PICTURE);
+      const imageUrl =
+        Array.isArray(pic) && pic.length && pic[0]?.url ? pic[0].url : null;
+      
+      if (imageUrl) claimEmbed.setImage(imageUrl);
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("member_wtb_start_claim").setLabel("Process Claim").setStyle(ButtonStyle.Primary),
@@ -329,10 +364,39 @@ export function registerMemberWtbClaimFlow(client) {
 
     // 3) Process claim -> show linked username confirmation (same concept as your normal flow)
     if (interaction.isButton() && interaction.customId === "member_wtb_start_claim") {
-      const data = sellerMap.get(interaction.channel.id);
-      if (!data?.sellerRecordId) {
-        return interaction.reply({ content: "❌ Missing seller context. Contact staff.", ephemeral: true });
+      let data = sellerMap.get(interaction.channel.id);
+
+      if (!data?.sellerRecordId || !data?.recordId) {
+        const recs = await base(WTB_TABLE)
+          .select({
+            filterByFormula: `{${FIELD_CLAIMED_CHANNEL_ID}} = "${interaction.channel.id}"`,
+            maxRecords: 1
+          })
+          .firstPage();
+      
+        if (!recs.length) {
+          return interaction.reply({ content: "❌ Missing seller context. Contact staff.", ephemeral: true });
+        }
+      
+        const rec = recs[0];
+        data = {
+          ...(data || {}),
+          recordId: rec.id,
+          sellerDiscordId: rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID),
+          vatType: rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE),
+          lockedPayout: rec.get(FIELD_LOCKED_PAYOUT)
+        };
+      
+        // optional: if you also store a linked seller record field later, you can pull it here too
+        sellerMap.set(interaction.channel.id, data);
       }
+      
+      if (!data?.sellerRecordId) {
+        // If you want it to show “is this you?” you need sellerRecordId.
+        // For now at least don't crash:
+        return interaction.reply({ content: "❌ Missing sellerRecordId (link seller record or store it).", ephemeral: true });
+      }
+
 
       const sellerRecord = await base(SELLERS_TABLE).find(data.sellerRecordId);
       const sellerIdField = sellerRecord.get("Seller ID") || data.sellerId;
@@ -385,8 +449,21 @@ export function registerMemberWtbClaimFlow(client) {
     // 5) Cancel deal -> set status back to Outsource + re-enable listing button
     if (interaction.isButton() && interaction.customId === "member_wtb_cancel_deal") {
       await interaction.deferReply({ ephemeral: true }).catch(() => {});
-      const data = sellerMap.get(interaction.channel.id);
-      if (!data?.recordId) return interaction.editReply("❌ Missing recordId.");
+      let data = sellerMap.get(interaction.channel.id);
+      
+      if (!data?.recordId) {
+        const recs = await base(WTB_TABLE)
+          .select({
+            filterByFormula: `{${FIELD_CLAIMED_CHANNEL_ID}} = "${interaction.channel.id}"`,
+            maxRecords: 1
+          })
+          .firstPage();
+      
+        if (!recs.length) return interaction.editReply("❌ Missing recordId.");
+      
+        data = { ...(data || {}), recordId: recs[0].id };
+        sellerMap.set(interaction.channel.id, data);
+      }
 
       // Re-enable listing claim button
       try {
