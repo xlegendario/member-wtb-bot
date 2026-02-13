@@ -220,7 +220,7 @@ export function registerMemberWtbClaimFlow(client) {
         return String(v);
       }
       
-      const sku = asText(wtbRec.get("SKU")).trim();
+      const sku = asText(wtbRec.get("SKU (API)")).trim();
       const size = asText(wtbRec.get("Size")).trim();
       const brand = asText(wtbRec.get("Brand")).trim();
 
@@ -239,7 +239,9 @@ export function registerMemberWtbClaimFlow(client) {
       }
       
       const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
-
+      if (!Number.isFinite(lockedPayout)) {
+        return interaction.editReply("❌ Locked payout is not a valid number.");
+      }
 
       // validate seller in Sellers Database
       const sellerRecords = await base(SELLERS_TABLE)
@@ -494,20 +496,22 @@ export function registerMemberWtbClaimFlow(client) {
       // Airtable reset
       await base(WTB_TABLE).update(data.recordId, {
         [FIELD_FULFILLMENT_STATUS]: "Outsource",
+      
+        // text fields -> ok to blank
         [FIELD_CLAIMED_CHANNEL_ID]: "",
         [FIELD_CLAIMED_MESSAGE_ID]: "",
-      
-        // ✅ clear linked record
-        [FIELD_CLAIMED_SELLER]: [],
-      
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
-        [FIELD_LOCKED_PAYOUT]: "",
-        [FIELD_LOCKED_PAYOUT_VAT0]: "",
-        [FIELD_CLAIMED_SELLER_CONFIRMED]: false
+      
+        // ✅ number/currency fields -> MUST be null
+        [FIELD_LOCKED_PAYOUT]: null,
+        [FIELD_LOCKED_PAYOUT_VAT0]: null,
+      
+        [FIELD_CLAIMED_SELLER_CONFIRMED]: false,
+      
+        // optional: if you have linked field "Claimed Seller"
+        // "Claimed Seller": []
       });
-
-
 
       await interaction.editReply("✅ Cancelled. Channel will be deleted.");
       setTimeout(() => interaction.channel.delete().catch(() => {}), 2500);
