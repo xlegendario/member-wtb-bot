@@ -2,8 +2,8 @@ import { Events } from "discord.js";
 import { postWtbEmbedToChannel } from "./postEmbed.js";
 import { registerSinglePairModal } from "./singlePairModal.js";
 import { registerCsvDropHandler } from "./csvDrop.js";
-import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js"; // your existing endpoint
-import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js";    // ✅ NEW
+import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js";
+import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js"; // ✅ ADD
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
@@ -14,9 +14,11 @@ export function registerWtbFeature(client, app) {
   registerSinglePairModal(client);
   registerCsvDropHandler(client);
 
-  // ✅ API endpoint that Make calls to post listing embeds
-  if (app) registerMemberWtbQuickDealCreate(app, client);
+  // Listing create endpoint
+  if (app) {
+    registerMemberWtbQuickDealCreate(app, client);
+  }
 
-  // ✅ Claim flow (buttons/modals/channels/photos/admin confirm)
+  // ✅ Claim flow (buttons/modals/messages)
   registerMemberWtbClaimFlow(client);
 }
