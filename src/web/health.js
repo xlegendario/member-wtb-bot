@@ -4,6 +4,10 @@ export function startHealthServer() {
   const app = express();
   const port = process.env.PORT || 3000;
 
+  // ✅ Needed so Airtable/Make POST JSON bodies are readable
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
   app.get("/health", (_req, res) => res.send("ok"));
 
   // CSV template download
@@ -19,4 +23,6 @@ FQ8138-002,44.5,210,260
   });
 
   app.listen(port, () => console.log(`HTTP server listening on ${port}`));
+
+  return app; // ✅ THIS is the key change
 }
