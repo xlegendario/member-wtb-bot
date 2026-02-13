@@ -586,18 +586,83 @@ export function registerMemberWtbClaimFlow(client) {
       const memberRoles = interaction.member?.roles?.cache?.map((r) => r.id) || [];
       const isAdmin = ADMIN_ROLE_IDS.length
         ? ADMIN_ROLE_IDS.some((id) => memberRoles.includes(id))
-        : true; // if you didn’t configure, it won’t block you
-
-      if (!isAdmin) return interaction.reply({ content: "❌ Not authorized.", ephemeral: true });
-
-      await interaction.reply({
-        content:
-          "✅ Confirm clicked.\n\nNext step: we will send this to Make via webhook (we’ll plug the URL later).",
-        ephemeral: true
-      });
-
-      // Later: call Make webhook with recordId + lockedPayout + vatType + seller etc.
-      return;
+        : true;
+    
+      if (!isAdmin) {
+        return interaction.reply({ content: "❌ Not authorized.", ephemeral: true });
+      }
+    
+      await interaction.deferReply({ ephemeral: true });
+    
+      const data = sellerMap.get(interaction.channel.id);
+      if (!data?.recordId) {
+        return interaction.editReply("❌ Missing recordId for this deal.");
+      }
+    
+      // Pull latest Airtable record to send complete payload
+      let rec;
+      try {
+        rec = await base(WTB_TABLE).find(data.recordId);
+      } catch (e) {
+        console.error("Could not load Member WTB record:", e);
+        return interaction.editReply("❌ Could not load Airtable record.");
+      }
+    
+      const payload = {
+        source: "Member WTB",
+        recordId: data.recordId,
+        dealChannelId: interaction.channel.id,
+    
+        // Seller
+        sellerRecordId: data.sellerRecordId,
+        sellerDiscordId: data.sellerDiscordId,
+        sellerId: data.sellerId,
+        vatType: data.vatType,
+    
+        // Product
+        sku: String(rec.get("SKU (Master)") || rec.get("SKU") || "").trim(),
+        size: String(rec.get("Size") || "").trim(),
+        brand: getBrandText(rec.get("Brand")),
+    
+        // Locked payout chosen at claim time
+        lockedPayout: data.lockedPayout,
+    
+        // Optional: attach listing msg URL if you want it
+        claimMessageUrl: rec.get(FIELD_CLAIM_MESSAGE_URL) || ""
+      };
+    
+      const hook = process.env.MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL || "";
+      if (!hook) {
+        return interaction.editReply("❌ MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL is not set in Render ENV.");
+      }
+    
+      try {
+        const resp = await fetch(hook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+    
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          console.error("Make webhook failed:", resp.status, text);
+          return interaction.editReply(`❌ Make webhook failed (${resp.status}). Check logs.`);
+        }
+      } catch (e) {
+        console.error("Error calling Make webhook:", e);
+        return interaction.editReply("❌ Could not reach Make webhook.");
+      }
+    
+      // Optional: mark confirmed in Airtable
+      try {
+        await base(WTB_TABLE).update(data.recordId, {
+          [FIELD_FULFILLMENT_STATUS]: "Confirmed"
+        });
+      } catch (e) {
+        console.warn("Could not update status to Confirmed:", e?.message || e);
+      }
+    
+      return interaction.editReply("✅ Confirmed. Sent to Make to create Inventory Unit.");
     }
   });
 
