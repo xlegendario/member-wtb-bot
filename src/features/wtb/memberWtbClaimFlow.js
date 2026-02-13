@@ -46,9 +46,13 @@ const FIELD_LOCKED_PAYOUT = "Locked Payout";
 const FIELD_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
 const FIELD_PICTURE = "Picture";
 
-// payouts (IMPORTANT: set to your real field names in Member WTBs)
-const FIELD_PAYOUT_MARGIN = "Locked Payout"; // fallback if you don't have separate fields
-const FIELD_PAYOUT_VAT0 = "Locked Payout VAT0"; // <<< CHANGE THIS to your real VAT0 payout field name if different
+// payouts (these MUST be the live/current payout fields on the Member WTBs record)
+const FIELD_CURRENT_PAYOUT_MARGIN = "Current Payout";        // <-- change if your Airtable field is named differently
+const FIELD_CURRENT_PAYOUT_VAT0 = "Current Payout VAT0";     // <-- change if your Airtable field is named differently
+
+// locked fields (these are written when a seller claims)
+const FIELD_LOCKED_PAYOUT_VAT0 = "Locked Payout VAT0";
+
 
 // Discord config
 const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
@@ -115,6 +119,20 @@ function getBrandText(brand) {
   return String(brand);
 }
 
+function toNumber(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+
+  const s = String(v)
+    .replace("€", "")
+    .replace(",", ".")
+    .trim();
+
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+
 export function registerMemberWtbClaimFlow(client) {
   // Runtime state
   const sellerMap = new Map(); // channelId -> claim context
@@ -173,22 +191,23 @@ export function registerMemberWtbClaimFlow(client) {
       const brand = getBrandText(wtbRec.get("Brand"));
 
       // --- LOCK PAYOUT HERE ---
-      // You must set FIELD_PAYOUT_VAT0 to your real VAT0 payout field name.
-      const marginPayout = Number(wtbRec.get(FIELD_PAYOUT_MARGIN) || 0);
-      const vat0Payout = Number(wtbRec.get(FIELD_PAYOUT_VAT0) || 0);
-
-      const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
-
-      if (!Number.isFinite(lockedPayout) || lockedPayout <= 0) {
+      // Read CURRENT payouts (these should be populated by Make / your system)
+      const marginPayout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_MARGIN));
+      const vat0Payout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_VAT0));
+      
+      if (marginPayout == null || vat0Payout == null) {
         return interaction.reply({
+          ephemeral: true,
           content:
-            `❌ Locked payout could not be computed.\n` +
+            `❌ Could not lock payout because current payout fields are missing/invalid.\n` +
             `Check Airtable fields:\n` +
-            `- ${FIELD_PAYOUT_MARGIN}\n` +
-            `- ${FIELD_PAYOUT_VAT0}\n`,
-          ephemeral: true
+            `- ${FIELD_CURRENT_PAYOUT_MARGIN}\n` +
+            `- ${FIELD_CURRENT_PAYOUT_VAT0}`
         });
       }
+      
+      const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
+
 
       // validate seller in Sellers Database
       const sellerRecords = await base(SELLERS_TABLE)
@@ -266,9 +285,14 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_MESSAGE_ID]: dealMsg.id,
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: interaction.user.id,
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: vatType,
+      
+        // lock values
         [FIELD_LOCKED_PAYOUT]: lockedPayout,
+        [FIELD_LOCKED_PAYOUT_VAT0]: vat0Payout,
+      
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
+      ;
 
       // Disable listing claim button (so Make doesn't re-trigger / users don't double claim)
       try {
@@ -394,8 +418,10 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
         [FIELD_LOCKED_PAYOUT]: "",
+        [FIELD_LOCKED_PAYOUT_VAT0]: "",
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
+
 
       await interaction.editReply("✅ Cancelled. Channel will be deleted.");
       setTimeout(() => interaction.channel.delete().catch(() => {}), 2500);
