@@ -2,7 +2,7 @@ import { Events } from "discord.js";
 import { postWtbEmbedToChannel } from "./postEmbed.js";
 import { registerSinglePairModal } from "./singlePairModal.js";
 import { registerCsvDropHandler } from "./csvDrop.js";
-import { registerMemberWtbQuickDealCreate } from "./quickDealsApi.js"; // ✅ NEW
+import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js"; // ✅ CORRECT FILE
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
@@ -13,8 +13,7 @@ export function registerWtbFeature(client, app) {
   registerSinglePairModal(client);
   registerCsvDropHandler(client);
 
-  // ✅ NEW: Airtable → Discord posting endpoint
-  // This lets Airtable call your Render URL and the bot posts the Quick Deal embed.
+  // Airtable → Discord Quick Deal posting
   if (app) {
     registerMemberWtbQuickDealCreate(app, client);
   }
