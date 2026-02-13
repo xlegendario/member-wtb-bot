@@ -17,9 +17,22 @@ function normalizeCsvRow(row) {
 
   if (!sku) return { ok: false, reason: "Missing SKU" };
   if (!size) return { ok: false, reason: "Missing Size" };
-  if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) {
+  
+  if (minPrice === null) {
+    return { ok: false, reason: "Missing or invalid Min Price" };
+  }
+  if (maxPrice === null) {
+    return { ok: false, reason: "Missing or invalid Max Price" };
+  }
+  
+  if (minPrice <= 0 || maxPrice <= 0) {
+    return { ok: false, reason: "Min/Max Price must be > 0" };
+  }
+  
+  if (minPrice > maxPrice) {
     return { ok: false, reason: "Min Price > Max Price" };
   }
+
 
   return { ok: true, data: { sku, size, minPrice, maxPrice } };
 }
@@ -94,7 +107,14 @@ export function registerCsvDropHandler(client) {
       }
 
       // Create records
-      const created = await createWtbBatch({ sellerRecordId, rows: accepted });
+      if (!accepted.length) {
+        await safeDM(
+          message.author,
+          "❌ No valid rows found in your CSV. Make sure **Min Price** and **Max Price** are filled."
+        );
+        return;
+      }
+
 
       // Always delete CSV message after processing
       await safeDelete(message);
