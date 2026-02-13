@@ -2,83 +2,80 @@ import {
   Events,
   ChannelType,
   PermissionsBitField,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } from "discord.js";
-
 import { base } from "../../airtable/client.js";
 import { CONFIG } from "../../config.js";
-import { createTranscript } from "discord-html-transcripts";
 
-/* =========================
-   FIELD NAMES (Member WTBs)
-   ========================= */
+/**
+ * REQUIRED Airtable fields in Member WTBs table:
+ * - Fulfillment Status
+ * - Claim Message ID
+ * - Claim Message URL
+ * - Claimed Channel ID
+ * - Claimed Message ID
+ * - Claimed Seller Discord ID
+ * - Claimed Seller VAT Type
+ * - Locked Payout
+ * - Claimed Seller Confirmed?
+ * - Picture (attachment) (optional, for listing image)
+ *
+ * REQUIRED fields in Sellers Database:
+ * - Seller ID (e.g. SE-00001)
+ * - Discord (username) OR Discord ID (whatever you use)
+ */
 
-const T_WTB = () => base(CONFIG.wtbTable);
-const T_SELLERS = () => base(CONFIG.sellersTable);
+// ---- CHANGE THESE IF YOUR FIELD NAMES DIFFER ----
+const WTB_TABLE = CONFIG.wtbTable; // default "Member WTBs"
+const SELLERS_TABLE = CONFIG.sellersTable; // default "Sellers Database"
 
-// Member WTB fields
-const F_STATUS = "Fulfillment Status";
-const F_NOTES = "Notes";
+const FIELD_FULFILLMENT_STATUS = "Fulfillment Status";
+const FIELD_CLAIM_MESSAGE_ID = "Claim Message ID";
+const FIELD_CLAIM_MESSAGE_URL = "Claim Message URL";
+const FIELD_CLAIMED_CHANNEL_ID = "Claimed Channel ID";
+const FIELD_CLAIMED_MESSAGE_ID = "Claimed Message ID";
+const FIELD_CLAIMED_SELLER_DISCORD_ID = "Claimed Seller Discord ID";
+const FIELD_CLAIMED_SELLER_VAT_TYPE = "Claimed Seller VAT Type";
+const FIELD_LOCKED_PAYOUT = "Locked Payout";
+const FIELD_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
+const FIELD_PICTURE = "Picture";
 
-const F_SKU_SOFT = "SKU (Soft)";
-const F_SIZE = "Size";
-const F_BRAND = "Brand"; // optional, only for embeds
+// payouts (IMPORTANT: set to your real field names in Member WTBs)
+const FIELD_PAYOUT_MARGIN = "Locked Payout"; // fallback if you don't have separate fields
+const FIELD_PAYOUT_VAT0 = "Locked Payout (VAT0)"; // <<< CHANGE THIS to your real VAT0 payout field name if different
 
-const F_CURRENT_PAYOUT = "Current Payout";
-const F_MAX_PAYOUT = "Max Payout";
-const F_LOCKED_PAYOUT = "Locked Payout";
-
-const F_CLAIM_MSG_ID = "Claim Message ID";
-const F_CLAIM_MSG_URL = "Claim Message URL";
-
-const F_CLAIMED_CHANNEL_ID = "Claimed Channel ID";
-const F_CLAIMED_MESSAGE_ID = "Claimed Message ID";
-const F_CLAIMED_SELLER_ID = "Claimed Seller ID"; // link to Sellers Database
-const F_CLAIMED_SELLER_DISCORD_ID = "Claimed Seller Discord ID";
-const F_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
-const F_CLAIMED_SELLER_VAT_TYPE = "Claimed Seller VAT Type"; // keep if you want, else remove
-
-/* =========================
-   PERMISSIONS / ADMIN
-   ========================= */
+// Discord config
+const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const ADMIN_ROLE_IDS = (process.env.ADMIN_ROLE_IDS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-// If you don’t set ADMIN_ROLE_IDS, it will allow only users with ManageGuild
-function isAdminMember(member) {
-  try {
-    if (!member) return false;
-    if (ADMIN_ROLE_IDS.length) {
-      const roles = member.roles?.cache;
-      return ADMIN_ROLE_IDS.some((id) => roles?.has(id));
-    }
-    return member.permissions?.has(PermissionsBitField.Flags.ManageGuild);
-  } catch {
-    return false;
-  }
+// If you don’t have env for admin roles, hardcode like normal quick deals:
+// const ADMIN_ROLE_IDS = ["942779423449579530", "1060615571118510191"];
+
+function toChannelSlug(s) {
+  return String(s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 95);
 }
 
-/* =========================
-   DEAL CATEGORY PICKING
-   ========================= */
-
-const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-async function pickCategoryWithSpace(guild) {
-  if (!DEAL_CATEGORY_IDS.length) return null;
-
+async function pickCategoryWithSpace(guild, categoryIds) {
+  if (!categoryIds.length) return null;
   await guild.channels.fetch();
 
   const counts = new Map();
@@ -88,568 +85,382 @@ async function pickCategoryWithSpace(guild) {
   }
 
   const MAX = 50;
-  for (const id of DEAL_CATEGORY_IDS) {
+  for (const id of categoryIds) {
     const cat = guild.channels.cache.get(id);
     if (!cat) continue;
     if (cat.type !== ChannelType.GuildCategory) continue;
-    const used = counts.get(id) || 0;
-    if (used < MAX) return cat;
+    if ((counts.get(id) || 0) < MAX) return cat;
   }
   return null;
 }
 
-/* =========================
-   HELPERS
-   ========================= */
-
-function upperTrim(v) {
-  return String(v || "").trim().toUpperCase();
-}
-
-function toChannelSlug(s) {
-  return String(s || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 90);
-}
-
-function extractChannelIdFromDiscordUrl(url) {
-  // https://discord.com/channels/<guildId>/<channelId>/<messageId>
-  const m = String(url || "").match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/);
-  return m ? m[1] : null;
-}
-
-function getNumberLike(v) {
-  if (v == null) return null;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = parseFloat(v.replace(/[^\d.,-]/g, "").replace(",", "."));
-    return Number.isFinite(n) ? n : null;
-  }
+function parseVatType(v) {
+  const raw = String(v || "").trim().toLowerCase();
+  if (raw === "margin") return "Margin";
+  if (raw === "vat21" || raw === "21" || raw === "21%") return "VAT21";
+  if (raw === "vat0" || raw === "0" || raw === "0%") return "VAT0";
   return null;
 }
 
-// For seller lookups: allow "00001" -> "SE-00001" or already "SE-00001"
-function normalizeSellerId(input) {
-  const raw = String(input || "").trim();
-  if (!raw) return "";
-  if (raw.toUpperCase().startsWith("SE-")) {
-    const digits = raw.replace(/\D/g, "");
-    return `SE-${digits.padStart(5, "0")}`;
+function getBrandText(brand) {
+  if (!brand) return "";
+  if (typeof brand === "string") return brand;
+  if (typeof brand === "object" && brand.name) return String(brand.name);
+  if (Array.isArray(brand) && brand.length) {
+    const first = brand[0];
+    if (typeof first === "string") return first;
+    if (first && typeof first === "object" && first.name) return String(first.name);
+    return String(first);
   }
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return "";
-  return `SE-${digits.padStart(5, "0")}`;
+  return String(brand);
 }
-
-/* =========================
-   RUNTIME STATE
-   ========================= */
-
-const claimState = new Map(); // channelId -> { recordId, sellerRecordId, sellerDiscordId, lockedPayout, confirmed, confirmSent, dealEmbedId }
-const uploadedImagesMap = new Map(); // channelId -> [imageUrls...]
-
-/* =========================
-   MAIN REGISTER
-   ========================= */
 
 export function registerMemberWtbClaimFlow(client) {
+  // Runtime state
+  const sellerMap = new Map(); // channelId -> claim context
+  const uploadedImagesMap = new Map(); // channelId -> [urls]
+
   client.on(Events.InteractionCreate, async (interaction) => {
-    try {
-      /* ======================================
-         1) LISTING CLAIM BUTTON -> MODAL
-         customId: member_wtb_claim_<recordId>
-         ====================================== */
-      if (interaction.isButton() && interaction.customId.startsWith("member_wtb_claim_")) {
-        const recordId = interaction.customId.replace("member_wtb_claim_", "").trim();
-        if (!recordId) return;
+    // 1) Claim button on listing -> show modal (Seller ID + VAT Type)
+    if (interaction.isButton() && interaction.customId.startsWith("member_wtb_claim_")) {
+      const recordId = interaction.customId.replace("member_wtb_claim_", "").trim();
 
-        // Safety: prevent double-claim
-        let rec;
-        try {
-          rec = await T_WTB().find(recordId);
-        } catch {
-          return interaction.reply({ content: "❌ Could not find this WTB record.", ephemeral: true });
-        }
+      const modal = new ModalBuilder()
+        .setCustomId(`member_wtb_claim_modal_${recordId}`)
+        .setTitle("Claim Member WTB Deal");
 
-        const status = String(rec.get(F_STATUS) || "").trim();
-        const alreadyClaimedChannel = String(rec.get(F_CLAIMED_CHANNEL_ID) || "").trim();
+      const sellerInput = new TextInputBuilder()
+        .setCustomId("seller_id")
+        .setLabel("Seller ID (e.g. 00001)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-        if (alreadyClaimedChannel || status.toLowerCase().includes("claim")) {
-          return interaction.reply({ content: "⚠️ This deal is already being claimed.", ephemeral: true });
-        }
+      const vatInput = new TextInputBuilder()
+        .setCustomId("vat_type")
+        .setLabel("VAT Type (Margin / VAT21 / VAT0)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder('Exactly: "Margin", "VAT21" or "VAT0"');
 
-        const modal = new ModalBuilder()
-          .setCustomId(`member_wtb_claim_modal_${recordId}`)
-          .setTitle("Claim Member WTB Deal");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(sellerInput),
+        new ActionRowBuilder().addComponents(vatInput)
+      );
 
-        const sellerInput = new TextInputBuilder()
-          .setCustomId("seller_id")
-          .setLabel("Seller ID (e.g. 00001)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
+      return interaction.showModal(modal);
+    }
 
-        modal.addComponents(new ActionRowBuilder().addComponents(sellerInput));
+    // 2) Modal submit -> validate seller + lock payout + create deal channel
+    if (interaction.isModalSubmit() && interaction.customId.startsWith("member_wtb_claim_modal_")) {
+      const recordId = interaction.customId.replace("member_wtb_claim_modal_", "").trim();
 
-        return interaction.showModal(modal);
-      }
+      const sellerIdRaw = interaction.fields.getTextInputValue("seller_id").replace(/\D/g, "");
+      const sellerId = `SE-${sellerIdRaw.padStart(5, "0")}`;
 
-      /* ======================================
-         2) MODAL SUBMIT -> CREATE PRIVATE CHANNEL
-         customId: member_wtb_claim_modal_<recordId>
-         ====================================== */
-      if (interaction.isModalSubmit() && interaction.customId.startsWith("member_wtb_claim_modal_")) {
-        const recordId = interaction.customId.replace("member_wtb_claim_modal_", "").trim();
-        const sellerIdInput = interaction.fields.getTextInputValue("seller_id");
-        const sellerId = normalizeSellerId(sellerIdInput);
-
-        if (!sellerId) {
-          return interaction.reply({ content: "❌ Invalid Seller ID.", ephemeral: true });
-        }
-
-        // Load WTB
-        const rec = await T_WTB().find(recordId);
-        const sku = upperTrim(rec.get(F_SKU_SOFT));
-        const size = String(rec.get(F_SIZE) || "").trim();
-        const brand = String(rec.get(F_BRAND) || "").trim();
-
-        // Lock payout at claim-time (IMPORTANT)
-        const current = getNumberLike(rec.get(F_CURRENT_PAYOUT));
-        const max = getNumberLike(rec.get(F_MAX_PAYOUT));
-        const lockedPayout = current ?? max ?? null;
-
-        if (!sku || !size || lockedPayout == null) {
-          return interaction.reply({
-            content: "❌ Missing SKU/Size/Payout on this record. Fix the Airtable record first.",
-            ephemeral: true
-          });
-        }
-
-        // Find seller record
-        const sellers = await T_SELLERS()
-          .select({
-            filterByFormula: `{Seller ID} = "${sellerId}"`,
-            maxRecords: 1
-          })
-          .firstPage();
-
-        if (!sellers.length) {
-          return interaction.reply({ content: `❌ Seller ID **${sellerId}** not found.`, ephemeral: true });
-        }
-
-        const sellerRecord = sellers[0];
-
-        // Create channel
-        const guild = await client.guilds.fetch(CONFIG.guildId);
-
-        const pickedCategory = await pickCategoryWithSpace(guild);
-        if (DEAL_CATEGORY_IDS.length && !pickedCategory) {
-          return interaction.reply({
-            content: "❌ All deal categories are full (50 channels each). Create a new category and add its ID to MEMBER_WTB_DEAL_CATEGORY_IDS.",
-            ephemeral: true
-          });
-        }
-
-        const suffix = recordId.slice(-5);
-        const rawName = `wtb-${sku}-${size}-${suffix}`;
-        const channelName = toChannelSlug(rawName);
-
-        const channel = await guild.channels.create({
-          name: channelName,
-          type: ChannelType.GuildText,
-          ...(pickedCategory ? { parent: pickedCategory.id } : {}),
-          permissionOverwrites: [
-            { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-            {
-              id: interaction.user.id,
-              allow: [
-                PermissionsBitField.Flags.ViewChannel,
-                PermissionsBitField.Flags.SendMessages,
-                PermissionsBitField.Flags.AttachFiles
-              ]
-            }
-          ]
-        });
-
-        const embed = new EmbedBuilder()
-          .setTitle("💸 Member WTB Claimed")
-          .setColor(0xffed00)
-          .setDescription(
-            `**SKU:** ${sku}\n` +
-              `**Size:** ${size}\n` +
-              (brand ? `**Brand:** ${brand}\n` : "") +
-              `**Locked Payout:** €${Number(lockedPayout).toFixed(2)}\n` +
-              `**Seller (claimed with):** ${sellerId}`
-          );
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("member_wtb_start_claim").setLabel("Process Claim").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("member_wtb_cancel_deal").setLabel("Cancel Deal").setStyle(ButtonStyle.Danger)
-        );
-
-        const dealMsg = await channel.send({ embeds: [embed], components: [row] });
-
-        // Update Airtable status + locked payout + claimed info
-        await T_WTB().update(recordId, {
-          [F_STATUS]: "Claim Processing",
-          [F_LOCKED_PAYOUT]: lockedPayout,
-          [F_CLAIMED_CHANNEL_ID]: channel.id,
-          [F_CLAIMED_MESSAGE_ID]: dealMsg.id,
-          [F_CLAIMED_SELLER_ID]: [{ id: sellerRecord.id }],
-          [F_CLAIMED_SELLER_DISCORD_ID]: interaction.user.id,
-          [F_CLAIMED_SELLER_CONFIRMED]: false
-        });
-
-        // Disable claim button on listing message (so it doesn’t get claimed twice)
-        try {
-          const claimMsgId = String(rec.get(F_CLAIM_MSG_ID) || "").trim();
-          const claimMsgUrl = String(rec.get(F_CLAIM_MSG_URL) || "").trim();
-          const listingChannelId = extractChannelIdFromDiscordUrl(claimMsgUrl);
-
-          if (claimMsgId && listingChannelId) {
-            const listingChannel = await client.channels.fetch(listingChannelId);
-            if (listingChannel?.isTextBased()) {
-              const listingMsg = await listingChannel.messages.fetch(claimMsgId).catch(() => null);
-              if (listingMsg) {
-                const disabled = new ButtonBuilder()
-                  .setCustomId(`member_wtb_claim_${recordId}`)
-                  .setLabel("Claim Deal")
-                  .setStyle(ButtonStyle.Secondary)
-                  .setDisabled(true);
-
-                await listingMsg.edit({
-                  components: [new ActionRowBuilder().addComponents(disabled)]
-                });
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("⚠️ Could not disable listing claim button:", e?.message || e);
-        }
-
-        // Cache state
-        claimState.set(channel.id, {
-          recordId,
-          sellerRecordId: sellerRecord.id,
-          sellerDiscordId: interaction.user.id,
-          lockedPayout,
-          confirmed: false,
-          confirmSent: false,
-          dealEmbedId: dealMsg.id
-        });
-
+      const vatType = parseVatType(interaction.fields.getTextInputValue("vat_type"));
+      if (!vatType) {
         return interaction.reply({
-          content: `✅ Claimed! Your deal channel is <#${channel.id}>.\nClick **Process Claim** inside that channel to verify your username and upload pictures.`,
+          content: '❌ Invalid VAT Type. Use **Margin**, **VAT21** or **VAT0**.',
           ephemeral: true
         });
       }
 
-      /* ======================================
-         3) PROCESS CLAIM -> ASK "IS THIS YOU?"
-         ====================================== */
-      if (interaction.isButton() && interaction.customId === "member_wtb_start_claim") {
-        const channelId = interaction.channel?.id;
-        if (!channelId) return;
+      // Load WTB record (so we can compute Locked Payout)
+      const wtbRec = await base(WTB_TABLE).find(recordId);
 
-        // Load from cache; if missing, recover from Airtable using channel id
-        let data = claimState.get(channelId);
-        if (!data?.recordId) {
-          const recs = await T_WTB()
-            .select({
-              filterByFormula: `{${F_CLAIMED_CHANNEL_ID}} = "${channelId}"`,
-              maxRecords: 1
-            })
-            .firstPage();
-          if (recs.length) {
-            const rec = recs[0];
-            data = {
-              recordId: rec.id,
-              sellerRecordId: (rec.get(F_CLAIMED_SELLER_ID) || [])[0]?.id,
-              sellerDiscordId: rec.get(F_CLAIMED_SELLER_DISCORD_ID),
-              confirmed: !!rec.get(F_CLAIMED_SELLER_CONFIRMED),
-              lockedPayout: getNumberLike(rec.get(F_LOCKED_PAYOUT))
-            };
-            claimState.set(channelId, data);
+      const sku = String(wtbRec.get("SKU") || "").trim();
+      const size = String(wtbRec.get("Size") || "").trim();
+      const brand = getBrandText(wtbRec.get("Brand"));
+
+      // --- LOCK PAYOUT HERE ---
+      // You must set FIELD_PAYOUT_VAT0 to your real VAT0 payout field name.
+      const marginPayout = Number(wtbRec.get(FIELD_PAYOUT_MARGIN) || 0);
+      const vat0Payout = Number(wtbRec.get(FIELD_PAYOUT_VAT0) || 0);
+
+      const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
+
+      if (!Number.isFinite(lockedPayout) || lockedPayout <= 0) {
+        return interaction.reply({
+          content:
+            `❌ Locked payout could not be computed.\n` +
+            `Check Airtable fields:\n` +
+            `- ${FIELD_PAYOUT_MARGIN}\n` +
+            `- ${FIELD_PAYOUT_VAT0}\n`,
+          ephemeral: true
+        });
+      }
+
+      // validate seller in Sellers Database
+      const sellerRecords = await base(SELLERS_TABLE)
+        .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
+        .firstPage();
+
+      if (!sellerRecords.length) {
+        return interaction.reply({ content: `❌ Seller ID **${sellerId}** not found.`, ephemeral: true });
+      }
+
+      // create deal channel
+      const guild = await client.guilds.fetch(CONFIG.guildId);
+
+      const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
+      if (!pickedCategory) {
+        return interaction.reply({
+          content: "❌ All Member WTB categories are full (50 channels each). Add a new category.",
+          ephemeral: true
+        });
+      }
+
+      const channelName = toChannelSlug(`wtb-${sku}-${size}`);
+      const dealChannel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        parent: pickedCategory.id,
+        permissionOverwrites: [
+          { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+          {
+            id: interaction.user.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles
+            ]
           }
-        }
+        ]
+      });
 
-        if (!data?.sellerRecordId) {
-          return interaction.reply({ content: "❌ Missing claimed Seller for this deal. Cancel and re-claim.", ephemeral: true });
-        }
-
-        const sellerRecord = await T_SELLERS().find(data.sellerRecordId);
-        const sellerIdField = sellerRecord.get("Seller ID") || "Unknown";
-        const discordUsername = sellerRecord.get("Discord") || "Unknown";
-
-        const confirmRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("member_wtb_confirm_seller").setLabel("✅ Yes, that is me").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId("member_wtb_reject_seller").setLabel("❌ No, not me").setStyle(ButtonStyle.Danger)
+      const claimEmbed = new EmbedBuilder()
+        .setTitle("💸 Member WTB Deal Claimed")
+        .setColor(0xffed00)
+        .setDescription(
+          `**SKU:** ${sku || "-"}\n` +
+            `**Size:** ${size || "-"}\n` +
+            `**Brand:** ${brand || "-"}\n` +
+            `**Locked Payout:** €${lockedPayout.toFixed(2)}\n` +
+            `**VAT Type:** ${vatType}\n` +
+            `**Seller (claimed with):** ${sellerId}`
         );
 
-        return interaction.reply({
-          content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
-          components: [confirmRow]
-        });
-      }
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("member_wtb_start_claim").setLabel("Process Claim").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("member_wtb_cancel_deal").setLabel("Cancel Deal").setStyle(ButtonStyle.Danger)
+      );
 
-      /* ======================================
-         4) CONFIRM / REJECT SELLER
-         ====================================== */
-      if (interaction.isButton() && (interaction.customId === "member_wtb_confirm_seller" || interaction.customId === "member_wtb_reject_seller")) {
-        const channelId = interaction.channel?.id;
-        if (!channelId) return;
+      const dealMsg = await dealChannel.send({ embeds: [claimEmbed], components: [row] });
 
-        let data = claimState.get(channelId) || {};
+      // Persist claim state
+      sellerMap.set(dealChannel.id, {
+        recordId,
+        sellerRecordId: sellerRecords[0].id,
+        sellerDiscordId: interaction.user.id,
+        sellerId,
+        vatType,
+        lockedPayout,
+        dealEmbedId: dealMsg.id,
+        confirmed: false
+      });
 
-        try {
-          await interaction.deferUpdate();
-        } catch {
-          // expired buttons etc.
-        }
+      // Update Airtable
+      await base(WTB_TABLE).update(recordId, {
+        [FIELD_FULFILLMENT_STATUS]: "Claim Processing",
+        [FIELD_CLAIMED_CHANNEL_ID]: dealChannel.id,
+        [FIELD_CLAIMED_MESSAGE_ID]: dealMsg.id,
+        [FIELD_CLAIMED_SELLER_DISCORD_ID]: interaction.user.id,
+        [FIELD_CLAIMED_SELLER_VAT_TYPE]: vatType,
+        [FIELD_LOCKED_PAYOUT]: lockedPayout,
+        [FIELD_CLAIMED_SELLER_CONFIRMED]: false
+      });
 
-        if (interaction.customId === "member_wtb_confirm_seller") {
-          claimState.set(channelId, { ...data, confirmed: true });
+      // Disable listing claim button (so Make doesn't re-trigger / users don't double claim)
+      try {
+        const claimMsgId = wtbRec.get(FIELD_CLAIM_MESSAGE_ID);
+        const claimMsgUrl = wtbRec.get(FIELD_CLAIM_MESSAGE_URL);
+        const listingChannelId = String(claimMsgUrl || "").match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/)?.[1];
 
-          // persist confirmed
-          if (data.recordId) {
-            await T_WTB().update(data.recordId, { [F_CLAIMED_SELLER_CONFIRMED]: true }).catch(() => null);
-          }
-
-          await interaction.message.edit({
-            content: "✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it is in-hand and complete.",
-            components: []
-          });
-
-          // you can replace this image with your own guide image
-          await interaction.channel.send({ files: ["https://i.imgur.com/JKaeeNz.png"] });
-
-          return;
-        }
-
-        if (interaction.customId === "member_wtb_reject_seller") {
-          await interaction.message.edit({
-            content:
-              "⚠️ Please check if the Seller ID was filled in correctly.\n\nIf it is wrong, cancel this deal and claim it again with the correct Seller ID.",
-            components: []
-          });
-          return;
-        }
-      }
-
-      /* ======================================
-         5) CANCEL DEAL
-         ====================================== */
-      if (interaction.isButton() && interaction.customId === "member_wtb_cancel_deal") {
-        await interaction.deferReply({ ephemeral: true }).catch(() => null);
-
-        const channel = interaction.channel;
-        const channelId = channel?.id;
-        if (!channelId) return;
-
-        let data = claimState.get(channelId);
-
-        // Recover recordId if needed
-        let recordId = data?.recordId;
-        if (!recordId) {
-          const recs = await T_WTB()
-            .select({ filterByFormula: `{${F_CLAIMED_CHANNEL_ID}} = "${channelId}"`, maxRecords: 1 })
-            .firstPage();
-          if (recs.length) recordId = recs[0].id;
-        }
-
-        if (!recordId) return interaction.editReply("❌ Could not find Airtable record for this deal.");
-
-        // Re-enable listing claim button
-        try {
-          const rec = await T_WTB().find(recordId);
-          const claimMsgId = String(rec.get(F_CLAIM_MSG_ID) || "").trim();
-          const claimMsgUrl = String(rec.get(F_CLAIM_MSG_URL) || "").trim();
-          const listingChannelId = extractChannelIdFromDiscordUrl(claimMsgUrl);
-
-          if (claimMsgId && listingChannelId) {
-            const listingChannel = await client.channels.fetch(listingChannelId);
-            if (listingChannel?.isTextBased()) {
-              const listingMsg = await listingChannel.messages.fetch(claimMsgId).catch(() => null);
-              if (listingMsg) {
-                const enabled = new ButtonBuilder()
+        if (claimMsgId && listingChannelId) {
+          const listingChannel = await guild.channels.fetch(listingChannelId);
+          if (listingChannel?.isTextBased()) {
+            const listingMsg = await listingChannel.messages.fetch(String(claimMsgId)).catch(() => null);
+            if (listingMsg) {
+              const disabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
                   .setCustomId(`member_wtb_claim_${recordId}`)
                   .setLabel("Claim Deal")
-                  .setStyle(ButtonStyle.Success)
-                  .setDisabled(false);
-
-                await listingMsg.edit({
-                  components: [new ActionRowBuilder().addComponents(enabled)]
-                });
-              }
+                  .setStyle(ButtonStyle.Secondary)
+                  .setDisabled(true)
+              );
+              await listingMsg.edit({ components: [disabledRow] });
             }
           }
-        } catch (e) {
-          console.warn("⚠️ Could not re-enable listing claim button:", e?.message || e);
         }
+      } catch (_) {}
 
-        // Reset Airtable back to Outsource (timer continues from Created Time)
-        await T_WTB().update(recordId, {
-          [F_STATUS]: "Outsource",
-          [F_CLAIMED_CHANNEL_ID]: "",
-          [F_CLAIMED_MESSAGE_ID]: "",
-          [F_CLAIMED_SELLER_ID]: [],
-          [F_CLAIMED_SELLER_DISCORD_ID]: "",
-          [F_CLAIMED_SELLER_CONFIRMED]: false,
-          [F_CLAIMED_SELLER_VAT_TYPE]: null
-        });
+      return interaction.reply({
+        content: `✅ Claimed! Your deal channel is <#${dealChannel.id}>.\nClick **Process Claim** there to verify your Seller ID and start photo upload.`,
+        ephemeral: true
+      });
+    }
 
-        // Transcript (optional)
-        const transcriptsChannelId = process.env.MEMBER_WTB_TRANSCRIPTS_CHANNEL_ID;
-        if (transcriptsChannelId) {
-          try {
-            const transcript = await createTranscript(channel, {
-              limit: -1,
-              returnBuffer: false,
-              fileName: `transcript-${channel.name}.html`
-            });
-
-            const transcriptsChannel = await client.channels.fetch(transcriptsChannelId);
-            if (transcriptsChannel?.isTextBased()) {
-              await transcriptsChannel.send({
-                content: `🗒️ Transcript for cancelled Member WTB deal **${channel.name}**`,
-                files: [transcript]
-              });
-            }
-          } catch (e) {
-            console.warn("⚠️ Transcript failed:", e?.message || e);
-          }
-        }
-
-        await interaction.editReply("✅ Deal cancelled. Channel will be deleted shortly.");
-
-        claimState.delete(channelId);
-        uploadedImagesMap.delete(channelId);
-
-        setTimeout(() => channel.delete().catch(() => null), 3000);
-        return;
+    // 3) Process claim -> show linked username confirmation (same concept as your normal flow)
+    if (interaction.isButton() && interaction.customId === "member_wtb_start_claim") {
+      const data = sellerMap.get(interaction.channel.id);
+      if (!data?.sellerRecordId) {
+        return interaction.reply({ content: "❌ Missing seller context. Contact staff.", ephemeral: true });
       }
 
-      /* ======================================
-         6) CONFIRM DEAL (ADMIN)
-         -> triggers Make webhook later (leave empty for now)
-         ====================================== */
-      if (interaction.isButton() && interaction.customId === "member_wtb_confirm_deal") {
-        if (!isAdminMember(interaction.member)) {
-          return interaction.reply({ content: "❌ You are not authorized to confirm the deal.", ephemeral: true });
-        }
+      const sellerRecord = await base(SELLERS_TABLE).find(data.sellerRecordId);
+      const sellerIdField = sellerRecord.get("Seller ID") || data.sellerId;
+      const discordUsername = sellerRecord.get("Discord") || "Unknown";
 
-        await interaction.deferReply({ ephemeral: true }).catch(() => null);
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("member_wtb_confirm_seller").setLabel("✅ Yes, that is me").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("member_wtb_reject_seller").setLabel("❌ No, not me").setStyle(ButtonStyle.Danger)
+      );
 
-        const channelId = interaction.channel?.id;
-        if (!channelId) return;
+      return interaction.reply({
+        content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
+        components: [confirmRow]
+      });
+    }
 
-        let data = claimState.get(channelId);
+    // 4) Confirm seller -> ask for 6 pics
+    if (interaction.isButton() && interaction.customId === "member_wtb_confirm_seller") {
+      await interaction.deferUpdate().catch(() => {});
+      const data = sellerMap.get(interaction.channel.id) || {};
+      sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
 
-        let recordId = data?.recordId;
-        if (!recordId) {
-          const recs = await T_WTB()
-            .select({ filterByFormula: `{${F_CLAIMED_CHANNEL_ID}} = "${channelId}"`, maxRecords: 1 })
-            .firstPage();
-          if (recs.length) recordId = recs[0].id;
-        }
-
-        if (!recordId) return interaction.editReply("❌ Could not find Airtable record for this deal.");
-
-        const rec = await T_WTB().find(recordId);
-        const locked = getNumberLike(rec.get(F_LOCKED_PAYOUT));
-        const sku = upperTrim(rec.get(F_SKU_SOFT));
-        const size = String(rec.get(F_SIZE) || "").trim();
-
-        // Later: send to Make
-        const makeUrl = String(process.env.MAKE_MEMBER_WTB_WEBHOOK_URL || "").trim();
-        if (makeUrl) {
-          try {
-            await fetch(makeUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                source: "Member WTB Quick Deal",
-                recordId,
-                sku,
-                size,
-                lockedPayout: locked
-              })
-            });
-          } catch (e) {
-            console.warn("⚠️ Make webhook failed:", e?.message || e);
-          }
-        } else {
-          console.log("ℹ️ MAKE_MEMBER_WTB_WEBHOOK_URL not set; skipping webhook call.");
-        }
-
-        await interaction.editReply(`✅ Deal confirmed.\nLocked payout: €${Number(locked ?? 0).toFixed(2)}`);
-
-        // remove confirm button message components if you want (optional)
-        return;
+      // persist checkbox
+      if (data?.recordId) {
+        await base(WTB_TABLE).update(data.recordId, { [FIELD_CLAIMED_SELLER_CONFIRMED]: true }).catch(() => {});
       }
-    } catch (err) {
-      console.error("❌ Interaction handler error:", err);
+
       try {
-        if (interaction?.isRepliable() && !interaction.replied) {
-          await interaction.reply({ content: "❌ Something went wrong.", ephemeral: true });
+        await interaction.message.edit({
+          content: "✅ Seller confirmed.\nUpload **6 different** pictures of the pair (in-hand).",
+          components: []
+        });
+      } catch (_) {}
+
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === "member_wtb_reject_seller") {
+      await interaction.deferUpdate().catch(() => {});
+      try {
+        await interaction.message.edit({
+          content: "⚠️ Then cancel this deal and claim again with the correct Seller ID.",
+          components: []
+        });
+      } catch (_) {}
+      return;
+    }
+
+    // 5) Cancel deal -> set status back to Outsource + re-enable listing button
+    if (interaction.isButton() && interaction.customId === "member_wtb_cancel_deal") {
+      await interaction.deferReply({ ephemeral: true }).catch(() => {});
+      const data = sellerMap.get(interaction.channel.id);
+      if (!data?.recordId) return interaction.editReply("❌ Missing recordId.");
+
+      // Re-enable listing claim button
+      try {
+        const wtbRec = await base(WTB_TABLE).find(data.recordId);
+        const claimMsgId = wtbRec.get(FIELD_CLAIM_MESSAGE_ID);
+        const claimMsgUrl = wtbRec.get(FIELD_CLAIM_MESSAGE_URL);
+        const listingChannelId = String(claimMsgUrl || "").match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/)?.[1];
+
+        if (claimMsgId && listingChannelId) {
+          const guild = await client.guilds.fetch(CONFIG.guildId);
+          const listingChannel = await guild.channels.fetch(listingChannelId);
+          if (listingChannel?.isTextBased()) {
+            const listingMsg = await listingChannel.messages.fetch(String(claimMsgId)).catch(() => null);
+            if (listingMsg) {
+              const enabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`member_wtb_claim_${data.recordId}`)
+                  .setLabel("Claim Deal")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(false)
+              );
+              await listingMsg.edit({ components: [enabledRow] });
+            }
+          }
         }
-      } catch {}
+      } catch (_) {}
+
+      // Airtable reset
+      await base(WTB_TABLE).update(data.recordId, {
+        [FIELD_FULFILLMENT_STATUS]: "Outsource",
+        [FIELD_CLAIMED_CHANNEL_ID]: "",
+        [FIELD_CLAIMED_MESSAGE_ID]: "",
+        [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
+        [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
+        [FIELD_LOCKED_PAYOUT]: "",
+        [FIELD_CLAIMED_SELLER_CONFIRMED]: false
+      });
+
+      await interaction.editReply("✅ Cancelled. Channel will be deleted.");
+      setTimeout(() => interaction.channel.delete().catch(() => {}), 2500);
+      return;
+    }
+
+    // 6) Admin confirm deal button (we add it after 6 pics)
+    if (interaction.isButton() && interaction.customId === "member_wtb_confirm_deal") {
+      const memberRoles = interaction.member?.roles?.cache?.map((r) => r.id) || [];
+      const isAdmin = ADMIN_ROLE_IDS.length
+        ? ADMIN_ROLE_IDS.some((id) => memberRoles.includes(id))
+        : true; // if you didn’t configure, it won’t block you
+
+      if (!isAdmin) return interaction.reply({ content: "❌ Not authorized.", ephemeral: true });
+
+      await interaction.reply({
+        content:
+          "✅ Confirm clicked.\n\nNext step: we will send this to Make via webhook (we’ll plug the URL later).",
+        ephemeral: true
+      });
+
+      // Later: call Make webhook with recordId + lockedPayout + vatType + seller etc.
+      return;
     }
   });
 
-  /* ======================================
-     MESSAGE HANDLER: count images until 6
-     ====================================== */
+  // 7) Count 6 pictures, then post Confirm button
   client.on(Events.MessageCreate, async (message) => {
-    try {
-      if (message.author.bot) return;
-      if (!message.channel || message.channel.type !== ChannelType.GuildText) return;
+    if (message.author.bot) return;
+    if (!message.channel || message.channel.type !== ChannelType.GuildText) return;
 
-      // Only act in channels that are member-wtb deal channels
-      const channelId = message.channel.id;
-      const data = claimState.get(channelId);
-      if (!data?.recordId) return;
+    const data = sellerMap.get(message.channel.id);
+    if (!data?.recordId) return;
 
-      // Only after seller confirmed? (optional)
-      if (!data.confirmed) return;
+    if (!message.attachments?.size) return;
 
-      if (message.attachments.size === 0) return;
+    const imageUrls = [...message.attachments.values()]
+      .filter((att) => att.contentType?.startsWith("image/"))
+      .map((att) => att.url);
 
-      const currentUploads = uploadedImagesMap.get(channelId) || [];
+    if (!imageUrls.length) return;
 
-      const imageUrls = [...message.attachments.values()]
-        .filter((att) => att.contentType?.startsWith("image/"))
-        .map((att) => att.url);
+    const arr = uploadedImagesMap.get(message.channel.id) || [];
+    arr.push(...imageUrls);
+    uploadedImagesMap.set(message.channel.id, arr);
 
-      if (!imageUrls.length) return;
+    const count = arr.length;
 
-      currentUploads.push(...imageUrls);
-      uploadedImagesMap.set(channelId, currentUploads);
-
-      const uploadedCount = currentUploads.length;
-
-      if (uploadedCount < 6) {
-        await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
-        return;
-      }
-
-      if (uploadedCount >= 6 && !data.confirmSent) {
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("member_wtb_confirm_deal").setLabel("Confirm Deal").setStyle(ButtonStyle.Success)
-        );
-
-        await message.channel.send({
-          content: "✅ All 6 pictures received. Admin can now confirm the deal.",
-          components: [row]
-        });
-
-        claimState.set(channelId, { ...data, confirmSent: true });
-      }
-    } catch (err) {
-      console.error("❌ MessageCreate handler error:", err);
+    if (count < 6) {
+      await message.channel.send(`📸 Uploaded ${count}/6 required pictures.`);
+      return;
     }
+
+    // Only send confirm button once
+    if (data.confirmSent) return;
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("member_wtb_confirm_deal").setLabel("Confirm Deal").setStyle(ButtonStyle.Success)
+    );
+
+    await message.channel.send({
+      content: "✅ All 6 pictures received. Admin can now confirm the deal.",
+      components: [row]
+    });
+
+    sellerMap.set(message.channel.id, { ...data, confirmSent: true });
   });
 }
