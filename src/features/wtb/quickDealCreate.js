@@ -71,6 +71,8 @@ export function registerMemberWtbQuickDealCreate(app, client) {
         brand,
         currentPayout,
         maxPayout,
+        currentPayoutVat0,
+        maxPayoutVat0,   
         timeToMaxPayout,
         imageUrl
       } = req.body || {};
