@@ -34,15 +34,17 @@ export function registerSinglePairModal(client) {
 
         const minP = new TextInputBuilder()
           .setCustomId("min")
-          .setLabel("Min Price (optional)")
+          .setLabel("Min Price (€)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false);
+          .setRequired(true)
+          .setPlaceholder("e.g. 180");
 
         const maxP = new TextInputBuilder()
           .setCustomId("max")
-          .setLabel("Max Price (optional)")
+          .setLabel("Max Price (€)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(false);
+          .setRequired(true)
+          .setPlaceholder("e.g. 200");
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(sku),
