@@ -48,7 +48,7 @@ const FIELD_PICTURE = "Picture";
 
 // payouts (IMPORTANT: set to your real field names in Member WTBs)
 const FIELD_PAYOUT_MARGIN = "Locked Payout"; // fallback if you don't have separate fields
-const FIELD_PAYOUT_VAT0 = "Locked Payout (VAT0)"; // <<< CHANGE THIS to your real VAT0 payout field name if different
+const FIELD_PAYOUT_VAT0 = "Locked Payout VAT0"; // <<< CHANGE THIS to your real VAT0 payout field name if different
 
 // Discord config
 const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
