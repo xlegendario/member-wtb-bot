@@ -10,6 +10,7 @@
     "airtable": "^0.12.2",
     "discord.js": "^14.16.3",
     "express": "^4.19.2",
-    "papaparse": "^5.4.1"
+    "papaparse": "^5.4.1",
+    "discord-html-transcripts": "^3.2.0"
   }
 }
