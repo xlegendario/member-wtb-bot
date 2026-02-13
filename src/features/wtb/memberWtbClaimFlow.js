@@ -514,7 +514,7 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_CHANNEL_ID]: "",
         [FIELD_CLAIMED_MESSAGE_ID]: "",
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
-        [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
+        [FIELD_CLAIMED_SELLER_VAT_TYPE]: null,
         // ✅ clear linked record
         [FIELD_CLAIMED_SELLER]: [],
         [FIELD_LOCKED_PAYOUT]: null,
