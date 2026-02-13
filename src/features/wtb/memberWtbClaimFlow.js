@@ -329,6 +329,7 @@ export function registerMemberWtbClaimFlow(client) {
       
         // lock values
         [FIELD_LOCKED_PAYOUT]: lockedPayout,
+        [FIELD_LOCKED_PAYOUT_VAT0]: vat0Payout,
       
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
@@ -502,8 +503,8 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_MESSAGE_ID]: "",
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
-      
-        // ✅ number/currency fields -> MUST be null
+        // ✅ clear linked record
+        [FIELD_CLAIMED_SELLER]: [],
         [FIELD_LOCKED_PAYOUT]: null,
         [FIELD_LOCKED_PAYOUT_VAT0]: null,
       
