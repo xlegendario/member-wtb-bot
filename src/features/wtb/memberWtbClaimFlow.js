@@ -134,6 +134,13 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function getLinkedRecordId(v) {
+  // Airtable linked record values are usually: ["recXXXX"]  (array of record ids)
+  if (Array.isArray(v) && v.length) return String(v[0]);
+  if (typeof v === "string" && v.trim()) return v.trim();
+  return "";
+}
+
 
 export function registerMemberWtbClaimFlow(client) {
   if (__memberWtbClaimFlowRegistered) return;
@@ -382,16 +389,21 @@ export function registerMemberWtbClaimFlow(client) {
         }
       
         const rec = recs[0];
+        const linkedSeller = rec.get(FIELD_CLAIMED_SELLER);
+        const sellerRecordId = getLinkedRecordId(linkedSeller);
+        
         data = {
           ...(data || {}),
           recordId: rec.id,
+          sellerRecordId: sellerRecordId || data?.sellerRecordId || "",
           sellerDiscordId: rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID),
           vatType: rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE),
-          lockedPayout: rec.get(FIELD_LOCKED_PAYOUT)
+          lockedPayout: rec.get(FIELD_LOCKED_PAYOUT),
+          sellerId: data?.sellerId || "" // optional
         };
-      
-        // optional: if you also store a linked seller record field later, you can pull it here too
+        
         sellerMap.set(interaction.channel.id, data);
+
       }
       
       if (!data?.sellerRecordId) {
