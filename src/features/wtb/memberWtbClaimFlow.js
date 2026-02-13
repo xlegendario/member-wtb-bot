@@ -490,11 +490,13 @@ export function registerMemberWtbClaimFlow(client) {
 
       try {
         await interaction.message.edit({
-          content: "✅ Seller confirmed.\nUpload **6 different** pictures of the pair (in-hand).",
+          content: '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it is in-hand and complete.',
           components: []
         });
-      } catch (_) {}
-
+        await interaction.channel.send({ files: ['https://i.imgur.com/JKaeeNz.png'] });
+      } catch (e) {
+        console.error('Failed to edit confirm_seller message:', e);
+      }
       return;
     }
 
