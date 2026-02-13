@@ -135,9 +135,28 @@ function toNumber(v) {
 }
 
 function getLinkedRecordId(v) {
-  // Airtable linked record values are usually: ["recXXXX"]  (array of record ids)
-  if (Array.isArray(v) && v.length) return String(v[0]);
-  if (typeof v === "string" && v.trim()) return v.trim();
+  // Airtable can return:
+  // - ["recXXXX"] (linked record ids)
+  // - [{id:"recXXXX"}] (rare)
+  // - [{name:"..."}] (lookup-ish)
+  // - "recXXXX"
+  if (!v) return "";
+
+  if (typeof v === "string") return v.trim();
+
+  if (Array.isArray(v) && v.length) {
+    const first = v[0];
+    if (!first) return "";
+
+    if (typeof first === "string") return first.trim();
+    if (typeof first === "object" && first.id) return String(first.id).trim();
+
+    // if it’s a lookup (name only), you cannot derive record id
+    return "";
+  }
+
+  if (typeof v === "object" && v.id) return String(v.id).trim();
+
   return "";
 }
 
@@ -374,60 +393,89 @@ export function registerMemberWtbClaimFlow(client) {
 
     // 3) Process claim -> show linked username confirmation (same concept as your normal flow)
     if (interaction.isButton() && interaction.customId === "member_wtb_start_claim") {
-      let data = sellerMap.get(interaction.channel.id);
-
-      if (!data?.sellerRecordId || !data?.recordId) {
-        const recs = await base(WTB_TABLE)
-          .select({
-            filterByFormula: `{${FIELD_CLAIMED_CHANNEL_ID}} = "${interaction.channel.id}"`,
-            maxRecords: 1
-          })
-          .firstPage();
-      
-        if (!recs.length) {
-          return interaction.reply({ content: "❌ Missing seller context. Contact staff.", ephemeral: true });
+      const channelId = interaction.channel.id;
+    
+      let data = sellerMap.get(channelId);
+    
+      try {
+        // If memory is empty (restart), pull everything back from Airtable using Claimed Channel ID
+        if (!data?.recordId || !data?.sellerRecordId) {
+          const recs = await base(WTB_TABLE)
+            .select({
+              filterByFormula: `{${FIELD_CLAIMED_CHANNEL_ID}} = "${channelId}"`,
+              maxRecords: 1
+            })
+            .firstPage();
+    
+          if (!recs.length) {
+            return interaction.reply({
+              content: "❌ Could not find the linked Member WTB record for this channel.",
+              ephemeral: true
+            });
+          }
+    
+          const rec = recs[0];
+          const linkedSeller = rec.get(FIELD_CLAIMED_SELLER);
+          const sellerRecordId = getLinkedRecordId(linkedSeller);
+    
+          data = {
+            ...(data || {}),
+            recordId: rec.id,
+            sellerRecordId,
+            sellerDiscordId: rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID),
+            vatType: rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE),
+            lockedPayout: rec.get(FIELD_LOCKED_PAYOUT),
+            confirmed: !!rec.get(FIELD_CLAIMED_SELLER_CONFIRMED)
+          };
+    
+          sellerMap.set(channelId, data);
         }
-      
-        const rec = recs[0];
-        const linkedSeller = rec.get(FIELD_CLAIMED_SELLER);
-        const sellerRecordId = getLinkedRecordId(linkedSeller);
-        
-        data = {
-          ...(data || {}),
-          recordId: rec.id,
-          sellerRecordId: sellerRecordId || data?.sellerRecordId || "",
-          sellerDiscordId: rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID),
-          vatType: rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE),
-          lockedPayout: rec.get(FIELD_LOCKED_PAYOUT),
-          sellerId: data?.sellerId || "" // optional
-        };
-        
-        sellerMap.set(interaction.channel.id, data);
-
+    
+        if (!data?.sellerRecordId) {
+          // This means your "Claimed Seller" field is NOT a real linked-record field,
+          // OR it wasn't populated.
+          return interaction.reply({
+            content:
+              `❌ No linked Seller record found.\n` +
+              `Check that Airtable field **"${FIELD_CLAIMED_SELLER}"** is a LINKED RECORD to Sellers Database, and that it gets filled on claim.`,
+            ephemeral: true
+          });
+        }
+    
+        const sellerRecord = await base(SELLERS_TABLE).find(data.sellerRecordId);
+        const sellerIdField = sellerRecord.get("Seller ID") || "Unknown ID";
+        const discordUsername = sellerRecord.get("Discord") || "Unknown";
+    
+        const confirmRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("member_wtb_confirm_seller")
+            .setLabel("✅ Yes, that is me")
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId("member_wtb_reject_seller")
+            .setLabel("❌ No, not me")
+            .setStyle(ButtonStyle.Danger)
+        );
+    
+        return interaction.reply({
+          content:
+            `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n` +
+            `**${discordUsername}**\n\nIs this you?`,
+          components: [confirmRow]
+        });
+      } catch (err) {
+        console.error("member_wtb_start_claim failed:", err);
+        try {
+          return interaction.reply({
+            content: "❌ Something went wrong while verifying your Seller ID. Try again or contact staff.",
+            ephemeral: true
+          });
+        } catch (_) {}
       }
-      
-      if (!data?.sellerRecordId) {
-        // If you want it to show “is this you?” you need sellerRecordId.
-        // For now at least don't crash:
-        return interaction.reply({ content: "❌ Missing sellerRecordId (link seller record or store it).", ephemeral: true });
-      }
-
-
-      const sellerRecord = await base(SELLERS_TABLE).find(data.sellerRecordId);
-      const sellerIdField = sellerRecord.get("Seller ID") || data.sellerId;
-      const discordUsername = sellerRecord.get("Discord") || "Unknown";
-
-      const confirmRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("member_wtb_confirm_seller").setLabel("✅ Yes, that is me").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("member_wtb_reject_seller").setLabel("❌ No, not me").setStyle(ButtonStyle.Danger)
-      );
-
-      return interaction.reply({
-        content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
-        components: [confirmRow]
-      });
-
+    
+      return;
     }
+
 
     // 4) Confirm seller -> ask for 6 pics
     if (interaction.isButton() && interaction.customId === "member_wtb_confirm_seller") {
