@@ -33,6 +33,18 @@ function getBrandText(brand) {
   return String(brand);
 }
 
+// helpers (put near top of file)
+function fmtMoney(v) {
+  if (v == null || v === "") return "—";
+  const n = Number(String(v).replace(",", "."));
+  if (!Number.isFinite(n)) return "—";
+  // keep decimals only if needed
+  return `€${Number.isInteger(n) ? n : n.toFixed(2).replace(/\.00$/, "")}`;
+}
+
+function payoutLine(margin, vat0) {
+  return `${fmtMoney(margin)} (Margin/VAT21) / ${fmtMoney(vat0)} (VAT0)`;
+}
 
 const MEMBER_WTB_DEFAULT_CHANNEL_ID =
   process.env.MEMBER_WTB_QUICK_DEALS_DEFAULT_CHANNEL_ID;
@@ -104,13 +116,10 @@ export function registerMemberWtbQuickDealCreate(app, client) {
           `**Brand:** ${brandText || "—"}`
         )
         .addFields(
-          { name: "Current Payout (Margin/VAT21)", value: currentPayout != null ? `€${currentPayout}` : "—", inline: true },
-          { name: "Max Payout (Margin/VAT21)", value: maxPayout != null ? `€${maxPayout}` : "—", inline: true },
-          { name: "Current Payout (VAT0)", value: currentPayoutVat0 != null ? `€${currentPayoutVat0}` : "—", inline: true },
-          { name: "Max Payout (VAT0)", value: maxPayoutVat0 != null ? `€${maxPayoutVat0}` : "—", inline: true },
+          { name: "Current Payout", value: payoutLine(currentPayout, currentPayoutVat0), inline: true },
+          { name: "Max Payout", value: payoutLine(maxPayout, maxPayoutVat0), inline: true },
           { name: "Time to Max Payout", value: timeToMaxPayout || "—", inline: false }
         );
-        
 
       if (imageUrl) embed.setImage(imageUrl);
 
