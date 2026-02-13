@@ -41,6 +41,7 @@ const FIELD_CLAIM_MESSAGE_URL = "Claim Message URL";
 const FIELD_CLAIMED_CHANNEL_ID = "Claimed Channel ID";
 const FIELD_CLAIMED_MESSAGE_ID = "Claimed Message ID";
 const FIELD_CLAIMED_SELLER_DISCORD_ID = "Claimed Seller Discord ID";
+const FIELD_CLAIMED_SELLER = "Claimed Seller"; // <-- LINKED RECORD field
 const FIELD_CLAIMED_SELLER_VAT_TYPE = "Claimed Seller VAT Type";
 const FIELD_LOCKED_PAYOUT = "Locked Payout";
 const FIELD_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
@@ -165,11 +166,18 @@ export function registerMemberWtbClaimFlow(client) {
         new ActionRowBuilder().addComponents(vatInput)
       );
 
-      return interaction.showModal(modal);
+      try {
+        await interaction.showModal(modal);
+      } catch (err) {
+        // 10062 = expired interaction (user clicked an old button / bot restart / latency)
+        if (err?.code !== 10062) console.error("showModal failed:", err);
+      }
+      return;
     }
 
     // 2) Modal submit -> validate seller + lock payout + create deal channel
     if (interaction.isModalSubmit() && interaction.customId.startsWith("member_wtb_claim_modal_")) {
+      await interaction.deferReply({ ephemeral: true });
       const recordId = interaction.customId.replace("member_wtb_claim_modal_", "").trim();
 
       const sellerIdRaw = interaction.fields.getTextInputValue("seller_id").replace(/\D/g, "");
@@ -177,10 +185,7 @@ export function registerMemberWtbClaimFlow(client) {
 
       const vatType = parseVatType(interaction.fields.getTextInputValue("vat_type"));
       if (!vatType) {
-        return interaction.reply({
-          content: '❌ Invalid VAT Type. Use **Margin**, **VAT21** or **VAT0**.',
-          ephemeral: true
-        });
+        return interaction.editReply('❌ Invalid VAT Type. Use **Margin**, **VAT21** or **VAT0**.');
       }
 
       // Load WTB record (so we can compute Locked Payout)
@@ -196,14 +201,12 @@ export function registerMemberWtbClaimFlow(client) {
       const vat0Payout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_VAT0));
       
       if (marginPayout == null || vat0Payout == null) {
-        return interaction.reply({
-          ephemeral: true,
-          content:
-            `❌ Could not lock payout because current payout fields are missing/invalid.\n` +
-            `Check Airtable fields:\n` +
-            `- ${FIELD_CURRENT_PAYOUT_MARGIN}\n` +
-            `- ${FIELD_CURRENT_PAYOUT_VAT0}`
-        });
+        return interaction.editReply(
+          `❌ Could not lock payout because current payout fields are missing/invalid.\n` +
+          `Check Airtable fields:\n` +
+          `- ${FIELD_CURRENT_PAYOUT_MARGIN}\n` +
+          `- ${FIELD_CURRENT_PAYOUT_VAT0}`
+        );
       }
       
       const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
@@ -215,7 +218,7 @@ export function registerMemberWtbClaimFlow(client) {
         .firstPage();
 
       if (!sellerRecords.length) {
-        return interaction.reply({ content: `❌ Seller ID **${sellerId}** not found.`, ephemeral: true });
+        return interaction.editReply(`❌ Seller ID **${sellerId}** not found.`);
       }
 
       // create deal channel
@@ -223,10 +226,7 @@ export function registerMemberWtbClaimFlow(client) {
 
       const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
       if (!pickedCategory) {
-        return interaction.reply({
-          content: "❌ All Member WTB categories are full (50 channels each). Add a new category.",
-          ephemeral: true
-        });
+        return interaction.editReply("❌ All Member WTB categories are full (50 channels each). Add a new category.");
       }
 
       const channelName = toChannelSlug(`wtb-${sku}-${size}`);
@@ -283,12 +283,15 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_FULFILLMENT_STATUS]: "Claim Processing",
         [FIELD_CLAIMED_CHANNEL_ID]: dealChannel.id,
         [FIELD_CLAIMED_MESSAGE_ID]: dealMsg.id,
+      
+        // ✅ LINK the seller record
+        [FIELD_CLAIMED_SELLER]: [sellerRecords[0].id],
+      
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: interaction.user.id,
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: vatType,
       
         // lock values
         [FIELD_LOCKED_PAYOUT]: lockedPayout,
-        [FIELD_LOCKED_PAYOUT_VAT0]: vat0Payout,
       
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
@@ -318,10 +321,10 @@ export function registerMemberWtbClaimFlow(client) {
         }
       } catch (_) {}
 
-      return interaction.reply({
-        content: `✅ Claimed! Your deal channel is <#${dealChannel.id}>.\nClick **Process Claim** there to verify your Seller ID and start photo upload.`,
-        ephemeral: true
-      });
+      return interaction.editReply(
+        `✅ Claimed! Your deal channel is <#${dealChannel.id}>.\n` +
+        `Click **Process Claim** there to verify your Seller ID and start photo upload.`
+      );
     }
 
     // 3) Process claim -> show linked username confirmation (same concept as your normal flow)
@@ -344,6 +347,7 @@ export function registerMemberWtbClaimFlow(client) {
         content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
         components: [confirmRow]
       });
+
     }
 
     // 4) Confirm seller -> ask for 6 pics
@@ -415,12 +419,17 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_FULFILLMENT_STATUS]: "Outsource",
         [FIELD_CLAIMED_CHANNEL_ID]: "",
         [FIELD_CLAIMED_MESSAGE_ID]: "",
+      
+        // ✅ clear linked record
+        [FIELD_CLAIMED_SELLER]: [],
+      
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: "",
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: "",
         [FIELD_LOCKED_PAYOUT]: "",
         [FIELD_LOCKED_PAYOUT_VAT0]: "",
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
+
 
 
       await interaction.editReply("✅ Cancelled. Channel will be deleted.");
