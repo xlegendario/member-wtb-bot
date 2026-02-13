@@ -2,7 +2,8 @@ import { Events } from "discord.js";
 import { postWtbEmbedToChannel } from "./postEmbed.js";
 import { registerSinglePairModal } from "./singlePairModal.js";
 import { registerCsvDropHandler } from "./csvDrop.js";
-import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js"; // ✅ CORRECT FILE
+import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js"; // your existing endpoint
+import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js";    // ✅ NEW
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
@@ -13,8 +14,9 @@ export function registerWtbFeature(client, app) {
   registerSinglePairModal(client);
   registerCsvDropHandler(client);
 
-  // Airtable → Discord Quick Deal posting
-  if (app) {
-    registerMemberWtbQuickDealCreate(app, client);
-  }
+  // ✅ API endpoint that Make calls to post listing embeds
+  if (app) registerMemberWtbQuickDealCreate(app, client);
+
+  // ✅ Claim flow (buttons/modals/channels/photos/admin confirm)
+  registerMemberWtbClaimFlow(client);
 }
