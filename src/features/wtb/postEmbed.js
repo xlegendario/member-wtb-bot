@@ -2,6 +2,7 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "disc
 import { CONFIG } from "../../config.js";
 
 export const BTN_SINGLE = "member_wtb_add_single_pair";
+export const BTN_CANCEL_WTBS = "member_wtb_cancel_wtbs"; // ✅ NEW
 export const EMBED_TITLE = "📥 Member WTB Upload";
 
 export async function postWtbEmbedToChannel(client) {
@@ -28,11 +29,18 @@ export async function postWtbEmbedToChannel(client) {
       .setCustomId(BTN_SINGLE)
       .setLabel("Add Single Pair")
       .setStyle(ButtonStyle.Primary),
+  
+    new ButtonBuilder() // ✅ NEW
+      .setCustomId(BTN_CANCEL_WTBS)
+      .setLabel("Cancel WTBs")
+      .setStyle(ButtonStyle.Danger),
+  
     new ButtonBuilder()
       .setLabel("Download CSV Template")
       .setStyle(ButtonStyle.Link)
       .setURL(`${CONFIG.publicBaseUrl.replace(/\/$/, "")}/wtb_template.csv`)
   );
+
 
   let headerMsg = null;
 
