@@ -15,7 +15,7 @@ import { findSellerRecordIdByDiscordId } from "../../airtable/sellers.js";
 // Airtable fields (change ONLY if your names differ)
 const WTB_TABLE = CONFIG.wtbTable; // "Member WTBs"
 const FIELD_STATUS = "Fulfillment Status";
-const FIELD_SKU = "SKU (Master)"; // you said this is the right one
+const FIELD_SKU = "SKU (API)"; // you said this is the right one
 const FIELD_SIZE = "Size";
 const FIELD_CLAIM_MESSAGE_ID = "Claim Message ID";
 const FIELD_CLAIM_MESSAGE_URL = "Claim Message URL";
