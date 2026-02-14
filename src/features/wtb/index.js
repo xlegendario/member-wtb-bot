@@ -4,6 +4,7 @@ import { registerSinglePairModal } from "./singlePairModal.js";
 import { registerCsvDropHandler } from "./csvDrop.js";
 import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js";
 import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js"; // ✅ ADD
+import { registerMemberWtbQuickDealUpdate } from "./quickDealUpdate.js";
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
@@ -17,6 +18,7 @@ export function registerWtbFeature(client, app) {
   // Listing create endpoint
   if (app) {
     registerMemberWtbQuickDealCreate(app, client);
+    registerMemberWtbQuickDealUpdate(app, client); // ✅ NEW
   }
 
   // ✅ Claim flow (buttons/modals/messages)
