@@ -1220,6 +1220,7 @@ export function registerMemberWtbClaimFlow(client) {
         const rec = await base(WTB_TABLE).find(activePay.recordId).catch(() => null);
         if (!rec) {
           clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+          buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
           await message.channel.send("❌ Could not find your deal anymore.");
           return;
         }
@@ -1227,9 +1228,11 @@ export function registerMemberWtbClaimFlow(client) {
         const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
           clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+          buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
           await message.channel.send("❌ Unauthorized proof upload blocked.");
           return;
         }
+
       
         // Save proof
         await base(WTB_TABLE).update(activePay.recordId, {
@@ -1265,6 +1268,7 @@ export function registerMemberWtbClaimFlow(client) {
         }
       
         clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+        buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
         await message.channel.send("✅ Payment proof received. You can now click **Upload Label**.");
         return;
       }
@@ -1315,6 +1319,7 @@ export function registerMemberWtbClaimFlow(client) {
         rec = await base(WTB_TABLE).find(pending.recordId);
       } catch (e) {
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
+        buyerDmMsgMap.delete(dmKey(buyerDiscordId, pending.recordId));
         await message.channel.send("❌ Could not find your deal anymore.");
         return;
       }
@@ -1327,9 +1332,11 @@ export function registerMemberWtbClaimFlow(client) {
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
+        buyerDmMsgMap.delete(dmKey(buyerDiscordId, pending.recordId));
         await message.channel.send("❌ Unauthorized label upload blocked.");
         return;
       }
+
 
       try {
         await base(WTB_TABLE).update(pending.recordId, {
