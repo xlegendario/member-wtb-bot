@@ -178,10 +178,17 @@ function computeBuyerCharge({ sellerVatType, buyerCountry, buyerVatId, buyerPric
   const sv = String(sellerVatType || "").trim().toUpperCase();
   const country = String(buyerCountry || "").trim().toUpperCase();
   const vatId = String(buyerVatId || "").trim();
-  const isCompany = !!vatId;
 
-  if (sv === "VAT0") return buyerPriceVat0 ?? buyerPrice;
-  if (isCompany && country && country !== "NL") return buyerPriceVat0 ?? buyerPrice;
+  // Margin is ALWAYS margin invoicing -> never VAT0 buyer pricing
+  if (sv === "MARGIN") return buyerPrice;
+
+  const isCompany = !!vatId;
+  const isNonNL = !!country && country !== "NL";
+
+  // Only B2B outside NL gets VAT0 price (reverse charge)
+  if (isCompany && isNonNL) return buyerPriceVat0 ?? buyerPrice;
+
+  // Everyone else pays normal
   return buyerPrice;
 }
 
@@ -771,7 +778,7 @@ export function registerMemberWtbClaimFlow(client) {
 
         if (buyerDiscordId && (buyerPrice != null || buyerPriceVat0 != null)) {
           const finalAmount = computeBuyerCharge({
-            sellerVatType: data.vatType,
+            sellerVatType: data.vatType,   // ✅ IMPORTANT
             buyerCountry,
             buyerVatId,
             buyerPrice,
