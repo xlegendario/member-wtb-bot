@@ -366,7 +366,7 @@ export function registerMemberWtbClaimFlow(client) {
       const brand = asText(wtbRec.get("Brand")).trim();
 
       // ✅ ADD THIS
-      const orderId = String(wtbRec.get("Order ID") || wtbRec.get("OrderId") || "").trim();
+      const orderId = String(wtbRec.get("Member WTB ID") || wtbRec.get("OrderId") || "").trim();
       
       const productName =
         String(wtbRec.get("Product Name") || "").trim() ||
