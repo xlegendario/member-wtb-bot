@@ -65,6 +65,15 @@ const FIELD_LOCKED_BUYER_PRICE_VAT0 = "Locked Buyer Price VAT0";
 
 const FIELD_BUYER_PAYMENT_REQUESTED_AT = "Buyer Payment Requested At";
 
+// ---- Shipping label fields (Member WTBs) ----
+const FIELD_TRACKING_NUMBER = "Tracking Number";
+const FIELD_SHIPPING_LABEL = "Shipping Label"; // Airtable attachment field
+
+// Buyer DM interaction IDs
+const BTN_UPLOAD_LABEL = "member_wtb_buyer_upload_label";
+const MODAL_UPLOAD_LABEL = "member_wtb_buyer_upload_label_modal";
+
+
 
 // Discord config
 const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
@@ -196,6 +205,10 @@ function computeBuyerCharge({ sellerVatType, buyerCountry, buyerVatId, buyerPric
   return buyerPrice;
 }
 
+function nowMs() {
+  return Date.now();
+}
+
 async function safeSendDM(client, discordUserId, payload) {
   try {
     const u = await client.users.fetch(discordUserId);
@@ -216,6 +229,8 @@ export function registerMemberWtbClaimFlow(client) {
   // Runtime state
   const sellerMap = new Map(); // channelId -> claim context
   const uploadedImagesMap = new Map(); // channelId -> [urls]
+  // buyerDiscordId -> { recordId, tracking?: string }
+  const pendingBuyerLabelMap = new Map();
 
   client.on(Events.InteractionCreate, async (interaction) => {
     // 1) Claim button on listing -> show modal (Seller ID + VAT Type)
@@ -747,51 +762,185 @@ export function registerMemberWtbClaimFlow(client) {
             `We will then send the shipping label request / next steps.`
           ].filter(Boolean);
 
-          const dmPayload = {
-            content: lines.join("\n"),
-            components: glideUrl
-              ? [
-                  new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                      .setStyle(ButtonStyle.Link)
-                      .setLabel("Open WTB in Glide")
-                      .setURL(glideUrl)
-                  )
-                ]
-              : []
-          };
-
-          await safeSendDM(client, buyerDiscordId, dmPayload);
+          const components = [];
+          
+          // Upload Label button (DM)
+          components.push(
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
+                .setLabel("Upload Label")
+                .setStyle(ButtonStyle.Danger)
+            )
+          );
+          
+          const dmPayload = { content: lines.join("\n"), components };
+          
+          const dmOk = await safeSendDM(client, buyerDiscordId, dmPayload);
+          if (dmOk) {
+            // store that THIS buyer is allowed to upload label for THIS record
+            pendingBuyerLabelMap.set(buyerDiscordId, { recordId: data.recordId, tracking: "", createdAt: 0 });
+          }
 
           // stamp in Airtable (optional but recommended)
           await base(WTB_TABLE).update(data.recordId, {
-            [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date()
+            [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
           }).catch(() => {});
+
         }
       } catch (e) {
         console.warn("Buyer payment DM step failed:", e?.message || e);
       }
       // ----------------------------------------------------------
-
     
-      // Optional: mark confirmed in Airtable
-      try {
-        await base(WTB_TABLE).update(data.recordId, {
-          [FIELD_FULFILLMENT_STATUS]: "Confirmed"
-        });
-      } catch (e) {
-        console.warn("Could not update status to Confirmed:", e?.message || e);
+      return interaction.editReply("✅ Buyer has been notified for payment + label upload.");
+    }
+
+    if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_LABEL}:`)) {
+      // Must be in DM
+      if (interaction.inGuild()) {
+        return interaction.reply({ content: "❌ Please use this in DM.", ephemeral: true });
       }
     
-      return interaction.editReply("✅ Confirmed. Sent to Make to create Inventory Unit.");
+      const recordId = String(interaction.customId).split(":")[1];
+
+      // ✅ Verify this buyer is allowed to upload label for this record
+      const pending = pendingBuyerLabelMap.get(interaction.user.id);
+      if (!pending || pending.recordId !== recordId) {
+        return interaction.reply({
+          content: "❌ This label upload is not linked to your WTB. Please use the latest message from the bot.",
+          ephemeral: true
+        });
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`${MODAL_UPLOAD_LABEL}:${recordId}`)
+        .setTitle("Upload UPS Label");
+    
+      const trackingInput = new TextInputBuilder()
+        .setCustomId("tracking")
+        .setLabel('UPS Tracking (must start with "1Z")')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder("1Z...");
+    
+      modal.addComponents(new ActionRowBuilder().addComponents(trackingInput));
+    
+      try {
+        await interaction.showModal(modal);
+      } catch (err) {
+        if (err?.code !== 10062) console.error("showModal upload label failed:", err);
+      }
+      return;
+    }
+
+    if (interaction.isModalSubmit() && String(interaction.customId || "").startsWith(`${MODAL_UPLOAD_LABEL}:`)) {
+      await interaction.deferReply({ ephemeral: true });
+    
+      if (interaction.inGuild()) {
+        return interaction.editReply("❌ Please do this in DM.");
+      }
+    
+      const recordId = String(interaction.customId).split(":")[1];
+      const tracking = String(interaction.fields.getTextInputValue("tracking") || "").trim();
+    
+      if (!tracking.toUpperCase().startsWith("1Z")) {
+        return interaction.editReply('❌ Invalid UPS tracking. It must start with **"1Z"**.');
+      }
+    
+      // Set pending state that *includes* tracking
+      pendingBuyerLabelMap.set(interaction.user.id, { recordId, tracking, createdAt: nowMs() });
+
+      // ✅ auto-expire after 15 minutes
+      setTimeout(() => {
+        const cur = pendingBuyerLabelMap.get(interaction.user.id);
+        if (!cur) return;
+      
+        // only delete if it's still the same session
+        if (cur.recordId === recordId && cur.tracking === tracking && nowMs() - cur.createdAt >= 15 * 60 * 1000) {
+          pendingBuyerLabelMap.delete(interaction.user.id);
+        }
+      }, 15 * 60 * 1000);
+
+      return interaction.editReply("✅ Tracking saved. Now upload the **label file** (PDF/image) here in DM.");
     }
   });
 
   // 7) Count 6 pictures, then post Confirm button
   client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
-    if (!message.channel || message.channel.type !== ChannelType.GuildText) return;
+  
+    // ---------------- Buyer DM label upload capture ----------------
+    if (!message.inGuild()) {
+      const pending = pendingBuyerLabelMap.get(message.author.id);
+      if (!pending) return;
 
+      // ✅ expire safety
+      if (pending.createdAt && nowMs() - pending.createdAt > 15 * 60 * 1000) {
+        pendingBuyerLabelMap.delete(message.author.id);
+        await message.channel.send("❌ Upload session expired. Click **Upload Label** again.");
+        return;
+      }
+
+      if (!pending.tracking) {
+        await message.channel.send("❌ Please click **Upload Label** first and submit the tracking number.");
+        return;
+      }
+    
+      if (!message.attachments?.size) {
+        await message.channel.send("❌ Please upload the label file (PDF/image).");
+        return;
+      }
+  
+      const att = [...message.attachments.values()][0];
+      const name = String(att?.name || att?.filename || "").toLowerCase();
+      const ct = String(att?.contentType || "").toLowerCase();
+  
+      const isPdf = ct.includes("pdf") || name.endsWith(".pdf");
+      const isImage = ct.startsWith("image/");
+  
+      if (!isPdf && !isImage) {
+        await message.channel.send("❌ Label must be a **PDF or image**.");
+        return;
+      }
+  
+      try {
+        await base(WTB_TABLE).update(pending.recordId, {
+          [FIELD_TRACKING_NUMBER]: pending.tracking,
+          [FIELD_SHIPPING_LABEL]: [{ url: att.url, filename: att.name || "label.pdf" }]
+        });
+  
+        pendingBuyerLabelMap.delete(message.author.id);
+  
+        await message.channel.send(`✅ Label saved.\n• Tracking: **${pending.tracking}**`);
+
+        // ✅ ALSO send to seller deal channel
+        try {
+          const rec = await base(WTB_TABLE).find(pending.recordId);
+          const dealChannelId = String(rec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
+          if (dealChannelId) {
+            const ch = await client.channels.fetch(dealChannelId).catch(() => null);
+            if (ch?.isTextBased()) {
+              await ch.send({
+                content: `📦 **Shipping label uploaded by buyer**\n• Tracking: **${pending.tracking}**`,
+                files: [{ attachment: att.url, name: att.name || "label.pdf" }]
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("Could not forward label to deal channel:", e?.message || e);
+        }
+      } catch (e) {
+        console.error("Failed saving label to Airtable:", e);
+        await message.channel.send("❌ Failed saving label to Airtable. Check field types/names.");
+      }
+      return;
+    }
+    // ---------------------------------------------------------------
+  
+    // Existing 6-picture logic (guild only)
+    if (!message.channel || message.channel.type !== ChannelType.GuildText) return;
+  
     const data = sellerMap.get(message.channel.id);
     if (!data?.recordId) return;
 
