@@ -729,7 +729,7 @@ export function registerMemberWtbClaimFlow(client) {
       const discordUserId = String(data.sellerDiscordId || "").trim();
       
       // If you have an orderId field in Airtable, pass it. Otherwise blank.
-      const orderId = String(rec.get("Order ID") || rec.get("OrderId") || "").trim();
+      const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
       
       const payload = {
         // ✅ keys Make expects (from your screenshot)
