@@ -47,6 +47,7 @@ const FIELD_CLAIMED_SELLER_VAT_TYPE = "Claimed Seller VAT Type";
 const FIELD_LOCKED_PAYOUT = "Locked Payout";
 const FIELD_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
 const FIELD_PICTURE = "Picture";
+const FIELD_PAYMENT_PROOF = "Payment Proof"; // Airtable attachment field (add this in Member WTBs)
 
 // payouts (live/current payout fields on Member WTBs)
 const FIELD_CURRENT_PAYOUT_MARGIN = "Current Payout";
@@ -74,6 +75,8 @@ const FIELD_SHIPPING_LABEL = "Shipping Label"; // Airtable attachment field
 // DM button + modal
 const BTN_UPLOAD_LABEL = "member_wtb_buyer_upload_label";
 const MODAL_UPLOAD_LABEL = "member_wtb_buyer_upload_label_modal";
+const BTN_UPLOAD_PAYMENT_PROOF = "member_wtb_buyer_upload_payment_proof";
+
 
 /* ---------------- ENV config ---------------- */
 
@@ -86,6 +89,28 @@ const ADMIN_ROLE_IDS = (process.env.ADMIN_ROLE_IDS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+const MAKE_MEMBER_WTB_WEBHOOK_URL = process.env.MAKE_MEMBER_WTB_WEBHOOK_URL || "";
+
+async function fireMakeWebhook(eventType, payload) {
+  if (!MAKE_MEMBER_WTB_WEBHOOK_URL) return;
+
+  try {
+    const res = await fetch(MAKE_MEMBER_WTB_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventType, ...payload })
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`[Make webhook ${eventType}] failed:`, res.status, text);
+    }
+  } catch (e) {
+    console.error(`[Make webhook ${eventType}] error:`, e);
+  }
+}
+
 
 /* ---------------- Helpers ---------------- */
 
@@ -199,12 +224,12 @@ function nowMs() {
 async function safeSendDM(client, discordUserId, payload) {
   try {
     const u = await client.users.fetch(discordUserId);
-    if (!u) return false;
-    await u.send(payload);
-    return true;
+    if (!u) return null;
+    const msg = await u.send(payload);
+    return msg; // ✅ return message object
   } catch (e) {
     console.warn("DM failed:", e?.message || e);
-    return false;
+    return null;
   }
 }
 
@@ -245,6 +270,51 @@ async function safeEditMessage(msg, patch) {
   }
 }
 
+async function buildMakePayload({ recordId, client }) {
+  const rec = await base(WTB_TABLE).find(recordId);
+
+  const sku = String(rec.get("SKU (API)") || rec.get("SKU") || "").trim();
+  const size = String(rec.get("Size") || "").trim();
+  const brand = getBrandText(rec.get("Brand"));
+
+  const pic = rec.get(FIELD_PICTURE);
+  const imageUrl = Array.isArray(pic) && pic.length && pic[0]?.url ? pic[0].url : "";
+
+  const productName =
+    String(rec.get("Product Name") || "").trim() ||
+    [brand, sku].filter(Boolean).join(" ").trim();
+
+  const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
+
+  // seller info from Airtable fields you already write on claim:
+  const sellerDiscordId = String(rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID) || "").trim();
+  const vatType = String(rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE) || "").trim();
+  const payout = Number(rec.get(FIELD_LOCKED_PAYOUT) || 0);
+
+  const dealChannelId = String(rec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
+  const claimMessageUrl = String(rec.get(FIELD_CLAIM_MESSAGE_URL) || "").trim();
+
+  return {
+    orderId,
+    productName,
+    sku,
+    size,
+    brand,
+    payout,
+    discordUserId: sellerDiscordId,
+    imageUrl,
+    vatType,
+
+    source: "Member WTB",
+    recordId,
+    dealChannelId,
+    sellerDiscordId,
+    lockedPayout: payout,
+    claimMessageUrl
+  };
+}
+
+
 /* ---------------- Main registration ---------------- */
 
 export function registerMemberWtbClaimFlow(client) {
@@ -257,8 +327,44 @@ export function registerMemberWtbClaimFlow(client) {
 
   // buyer label sessions
   const pendingBuyerLabelMap = new Map(); // key: buyerId:recordId -> session
-  const PENDING_LABEL_TTL_MS = 15 * 60 * 1000;
+  const PENDING_LABEL_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const pendingKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
+
+  // buyer payment proof sessions (strict 5 min, per buyer+record)
+  const pendingBuyerPaymentMap = new Map(); // key: buyerId:recordId -> session
+  const PENDING_PAYMENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const payKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
+  
+  function setPendingPaymentSession({ buyerDiscordId, recordId, messageId }) {
+    const now = nowMs();
+    pendingBuyerPaymentMap.set(payKey(buyerDiscordId, recordId), {
+      buyerDiscordId,
+      recordId,
+      messageId: messageId || "",
+      createdAt: now,
+      expiresAt: now + PENDING_PAYMENT_TTL_MS
+    });
+  }
+  
+  function getPendingPaymentSession(buyerDiscordId, recordId) {
+    const key = payKey(buyerDiscordId, recordId);
+    const s = pendingBuyerPaymentMap.get(key);
+    if (!s) return null;
+    if (nowMs() > s.expiresAt) {
+      pendingBuyerPaymentMap.delete(key);
+      return null;
+    }
+    return s;
+  }
+  
+  function clearPendingPaymentSession(buyerDiscordId, recordId) {
+    pendingBuyerPaymentMap.delete(payKey(buyerDiscordId, recordId));
+  }
+  
+  // Helper: block multiple active sessions for same order
+  function hasActiveAnySession(buyerDiscordId, recordId) {
+    return !!getPendingPaymentSession(buyerDiscordId, recordId) || !!getPendingLabelSession(buyerDiscordId, recordId);
+  }
 
   function setPendingLabelSession({ buyerDiscordId, recordId, tracking }) {
     const now = nowMs();
@@ -756,83 +862,85 @@ export function registerMemberWtbClaimFlow(client) {
       };
 
 
-      const hook = process.env.MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL || "";
-      if (!hook) return safeReplyEphemeral(interaction, "❌ MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL is not set in Render ENV.");
-
-      try {
-        const resp = await fetch(hook, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        if (!resp.ok) {
-          const text = await resp.text().catch(() => "");
-          console.error("Make webhook failed:", resp.status, text);
-          return safeReplyEphemeral(interaction, `❌ Make webhook failed (${resp.status}). Check logs.`);
-        }
-      } catch (e) {
-        console.error("Error calling Make webhook:", e);
-        return safeReplyEphemeral(interaction, "❌ Could not reach Make webhook.");
-      }
-
-      // DM buyer for payment + label upload
+      // DM buyer: require payment proof first, then unlock Upload Label
       let dmOk = false;
+      
       try {
         const buyerDiscordId = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         const buyerCountry = firstText(rec.get(FIELD_BUYER_COUNTRY));
         const buyerVatId = firstText(rec.get(FIELD_BUYER_VAT_ID));
         const buyerPrice = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE));
         const buyerPriceVat0 = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE_VAT0));
-
+      
+        const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
+        const productName =
+          String(rec.get("Product Name") || "").trim() ||
+          [brand, sku].filter(Boolean).join(" ").trim();
+      
         if (buyerDiscordId && (buyerPrice != null || buyerPriceVat0 != null)) {
           const finalAmount = computeBuyerCharge({
-            sellerVatType: data.vatType,   // ✅ IMPORTANT
+            sellerVatType: data.vatType,
             buyerCountry,
             buyerVatId,
             buyerPrice,
             buyerPriceVat0
           });
-
+      
           const iban = process.env.PAYMENT_IBAN || "";
           const paypal = process.env.PAYMENT_PAYPAL_EMAIL || "";
           const beneficiary = process.env.PAYMENT_BENEFICIARY || "Payout by Kickz Caviar";
-
-          const lines = [
-            `✅ Your WTB has been **matched** and we are ready to ship.`,
-            ``,
-            `**Order:** ${orderId || "-"}`,
-            `**Product:** ${productName || "-"}`,
-            `**SKU:** ${sku || "-"}`,
-            `**Size:** ${size || "-"}`,
-            ``,
-            `**Amount to pay:** €${Number(finalAmount || 0).toFixed(2)}`,
-            ``,
-            `**Payment method:**`,
-            ...(iban ? [`• **IBAN:** ${iban} to ${beneficiary}`] : []),
-            ...(paypal ? [`• **PayPal:** ${paypal}`] : []),
-            ``,
-            `Once paid, reply here with proof of payment.`,
-            ``,
-            `After that:.`,
-            `1. Click **Upload Label** to submit the **UPS Tracking Number**.`,
-            `2. Drop the **UPS Label PDF** in the chat, so it will be send to the seller.`
-          ].filter(Boolean);
-
-
-          const components = [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
-                .setLabel("Upload Label")
-                .setStyle(ButtonStyle.Success)
-            )
+      
+          const embed = new EmbedBuilder()
+            .setTitle("✅ Your WTB has been matched")
+            .setColor(0xffed00)
+            .setDescription("We are ready to ship. Please pay and upload **payment proof** first.")
+            .addFields(
+              { name: "Order", value: orderId || "—", inline: false },
+              { name: "Product", value: productName || "—", inline: false },
+              { name: "SKU", value: sku || "—", inline: true },
+              { name: "Size", value: size || "—", inline: true },
+              { name: "Amount to pay (before shipping)", value: `€${Number(finalAmount || 0).toFixed(2)}`, inline: false }
+            );
+      
+          const paymentLines = [
+            ...(iban ? [`• **IBAN:** ${iban} (${beneficiary})`] : []),
+            ...(paypal ? [`• **PayPal:** ${paypal}`] : [])
           ];
+          if (paymentLines.length) {
+            embed.addFields({ name: "Payment method", value: paymentLines.join("\n"), inline: false });
+          }
+      
+          embed.addFields({
+            name: "Next steps",
+            value:
+              `1) Upload **payment proof** (screenshot/photo) in this DM.\n` +
+              `2) After proof is received, **Upload Label** unlocks.\n` +
+              `3) Click **Upload Label** and submit your UPS tracking.\n` +
+              `4) Then drop the UPS label PDF/image in the chat.`,
+            inline: false
+          });
+      
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${data.recordId}`)
+              .setLabel("Upload Payment Proof")
+              .setStyle(ButtonStyle.Primary), // (Primary = blurple; can't be yellow)
+            new ButtonBuilder()
+              .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
+              .setLabel("Upload Label")
+              .setStyle(ButtonStyle.Success)
+              .setDisabled(true)
+          );
 
-          dmOk = await safeSendDM(client, buyerDiscordId, { content: lines.join("\n"), components });
-
+      
+          const dmMsg = await safeSendDM(client, buyerDiscordId, { embeds: [embed], components: [row] });
+      
+          dmOk = !!dmMsg;
+      
           if (dmOk) {
-            setPendingLabelSession({ buyerDiscordId, recordId: data.recordId, tracking: "" });
+            // store DM messageId so we can edit it later to enable the button
+            setPendingPaymentSession({ buyerDiscordId, recordId: data.recordId, messageId: dmMsg.id });
+      
             await base(WTB_TABLE).update(data.recordId, {
               [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
             }).catch(() => {});
@@ -841,6 +949,7 @@ export function registerMemberWtbClaimFlow(client) {
       } catch (e) {
         console.warn("Buyer DM step failed:", e?.message || e);
       }
+
 
       // ✅ Fix UX: disable the confirm button + post visible channel message
       try {
@@ -861,6 +970,65 @@ export function registerMemberWtbClaimFlow(client) {
       return safeReplyEphemeral(interaction, "✅ Done. Buyer DM step executed.");
     }
 
+    // 7A) Buyer DM: click Upload Payment Proof -> start 5-min proof session
+    if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_PAYMENT_PROOF}:`)) {
+      if (interaction.inGuild()) {
+        return interaction.reply({ content: "❌ Please use this in DM.", flags: MessageFlags.Ephemeral });
+      }
+    
+      const recordId = String(interaction.customId).split(":")[1];
+      const buyerDiscordId = interaction.user.id;
+    
+      let rec;
+      try {
+        rec = await base(WTB_TABLE).find(recordId);
+      } catch (_) {
+        return interaction.reply({ content: "❌ Invalid deal reference.", flags: MessageFlags.Ephemeral });
+      }
+    
+      const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
+      if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
+        return interaction.reply({ content: "❌ You are not authorized for this deal.", flags: MessageFlags.Ephemeral });
+      }
+    
+      // Prevent multiple sessions (proof or label) for this order
+      if (hasActiveAnySession(buyerDiscordId, recordId)) {
+        return interaction.reply({
+          content: "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+    
+      // If proof already exists, just unlock label (no new session)
+      const proof = rec.get(FIELD_PAYMENT_PROOF);
+      const hasProof = Array.isArray(proof) && proof.length;
+      if (hasProof) {
+        return interaction.reply({
+          content: "✅ Payment proof already received. You can proceed with Upload Label.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // Block any other active payment session for this buyer (prevents mismatch)
+      for (const s of pendingBuyerPaymentMap.values()) {
+        if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) {
+          return interaction.reply({
+            content: "⚠️ You already have an active **Payment Proof** session. Please finish it first (or wait 5 minutes).",
+            flags: MessageFlags.Ephemeral
+          });
+        }
+      }
+
+      // Start proof session (we’ll capture the next attachment in DM)
+      setPendingPaymentSession({ buyerDiscordId, recordId, messageId: interaction.message?.id || "" });
+    
+      return interaction.reply({
+        content: "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    
     // 7) Buyer DM: click Upload Label -> modal for tracking
     if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_LABEL}:`)) {
       if (interaction.inGuild()) {
@@ -881,6 +1049,25 @@ export function registerMemberWtbClaimFlow(client) {
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
         return interaction.reply({ content: "❌ You are not authorized to upload a label for this deal.", flags: MessageFlags.Ephemeral });
       }
+
+      // Must have payment proof first
+      const proof = rec.get(FIELD_PAYMENT_PROOF);
+      const hasProof = Array.isArray(proof) && proof.length;
+      if (!hasProof) {
+        return interaction.reply({
+          content: "❌ Please upload **payment proof** first using **Upload Payment Proof**.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+      
+      // No parallel sessions allowed
+      if (hasActiveAnySession(buyerDiscordId, recordId)) {
+        return interaction.reply({
+          content: "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
 
       const session = getPendingLabelSession(buyerDiscordId, recordId);
       if (!session) setPendingLabelSession({ buyerDiscordId, recordId, tracking: "" });
@@ -930,6 +1117,10 @@ export function registerMemberWtbClaimFlow(client) {
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
         return safeReplyEphemeral(interaction, "❌ You are not authorized to upload a label for this deal.");
       }
+      
+      if (hasActiveAnySession(buyerDiscordId, recordId)) {
+        return safeReplyEphemeral(interaction, "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).");
+      }
 
       setPendingLabelSession({ buyerDiscordId, recordId, tracking });
       return safeReplyEphemeral(interaction, "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.");
@@ -954,33 +1145,99 @@ export function registerMemberWtbClaimFlow(client) {
 
       const buyerDiscordId = message.author.id;
 
+      const att = [...message.attachments.values()][0];
+      const name = String(att?.name || att?.filename || "").toLowerCase();
+      const ct = String(att?.contentType || "").toLowerCase();
+      const isPdf = ct.includes("pdf") || name.endsWith(".pdf");
+      const isImage = ct.startsWith("image/") || /\.(png|jpg|jpeg|webp)$/i.test(name);
+      if (!isPdf && !isImage) {
+        await message.channel.send("❌ File must be a **PDF or image**.");
+        return;
+      }
+      
+      // 1) PAYMENT PROOF SESSION?
+      // Find any active proof session for this buyer (we only allow 1 per record anyway)
+      let activePay = null;
+      for (const s of pendingBuyerPaymentMap.values()) {
+        if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) {
+          activePay = s;
+          break;
+        }
+      }
+      
+      if (activePay) {
+        const rec = await base(WTB_TABLE).find(activePay.recordId).catch(() => null);
+        if (!rec) {
+          clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+          await message.channel.send("❌ Could not find your deal anymore.");
+          return;
+        }
+      
+        const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
+        if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
+          clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+          await message.channel.send("❌ Unauthorized proof upload blocked.");
+          return;
+        }
+      
+        // Save proof
+        await base(WTB_TABLE).update(activePay.recordId, {
+          [FIELD_PAYMENT_PROOF]: [{ url: att.url, filename: att.name || "payment-proof" }]
+        });
+      
+        // Enable Upload Label button by editing the original DM message (if we can fetch it)
+        try {
+          const dmMsgId = activePay.messageId;
+          if (dmMsgId) {
+            const dmMsg = await message.channel.messages.fetch(dmMsgId).catch(() => null);
+            if (dmMsg) {
+              const recordId = activePay.recordId;
+      
+              const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
+                  .setLabel("Upload Payment Proof")
+                  .setStyle(ButtonStyle.Primary)
+                  .setDisabled(true),
+                new ButtonBuilder()
+                  .setCustomId(`${BTN_UPLOAD_LABEL}:${recordId}`)
+                  .setLabel("Upload Label")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(false)
+              );
+      
+              await dmMsg.edit({ components: [row] });
+            }
+          }
+        } catch (e) {
+          console.warn("Failed enabling label button:", e?.message || e);
+        }
+      
+        clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
+        await message.channel.send("✅ Payment proof received. You can now click **Upload Label**.");
+        return;
+      }
+      
+      // 2) LABEL SESSION?
+      // (your existing label logic can continue here)
+
+
       // pick latest valid session for this buyer
       const sessions = [];
       for (const s of pendingBuyerLabelMap.values()) {
         if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) sessions.push(s);
       }
       if (!sessions.length) {
-        await message.channel.send("❌ No active label session found. Please click **Upload Label** first.");
+        await message.channel.send("❌ No active upload session found. Please click **Upload Payment Proof** or **Upload Label** first.");
         return;
       }
+
 
       sessions.sort((a, b) => b.createdAt - a.createdAt);
       const pending = sessions[0];
 
       if (!pending.tracking) {
         await message.channel.send("❌ Please click **Upload Label** first and submit the tracking number.");
-        return;
-      }
-
-      const att = [...message.attachments.values()][0];
-      const name = String(att?.name || att?.filename || "").toLowerCase();
-      const ct = String(att?.contentType || "").toLowerCase();
-
-      const isPdf = ct.includes("pdf") || name.endsWith(".pdf");
-      const isImage = ct.startsWith("image/") || /\.(png|jpg|jpeg|webp)$/i.test(name);
-
-      if (!isPdf && !isImage) {
-        await message.channel.send("❌ Label must be a **PDF or image**.");
         return;
       }
 
@@ -1005,6 +1262,21 @@ export function registerMemberWtbClaimFlow(client) {
           [FIELD_TRACKING_NUMBER]: pending.tracking,
           [FIELD_SHIPPING_LABEL]: [{ url: att.url, filename: att.name || "label.pdf" }]
         });
+
+        // ✅ Send Make webhook ONLY after label upload is saved
+        try {
+          const payload = await buildMakePayload({ recordId: pending.recordId, client });
+        
+          await fireMakeWebhook("label_uploaded", {
+            ...payload,
+            trackingNumber: pending.tracking,
+            labelUrl: att.url,
+            labelFilename: att.name || "label.pdf"
+          });
+        } catch (e) {
+          console.error("Failed building/sending Make webhook (label):", e);
+        }
+
 
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
 
