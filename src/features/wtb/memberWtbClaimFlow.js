@@ -403,7 +403,7 @@ export function registerMemberWtbClaimFlow(client) {
         return safeReplyEphemeral(interaction, "❌ All Member WTB categories are full (50 channels each). Add a new category.");
       }
 
-      const channelName = toChannelSlug(`wtb-${sku}-${size}`);
+      const channelName = toChannelSlug(orderId || `wtb-${sku}-${size}`);
 
       const adminRoleOverwrites = (ADMIN_ROLE_IDS || []).map((roleId) => ({
         id: roleId,
