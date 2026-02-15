@@ -1060,13 +1060,14 @@ export function registerMemberWtbClaimFlow(client) {
         });
       }
       
-      // No parallel sessions allowed
-      if (hasActiveAnySession(buyerDiscordId, recordId)) {
+      // ✅ Block only if they are still in a PAYMENT PROOF session for this record
+      if (getPendingPaymentSession(buyerDiscordId, recordId)) {
         return interaction.reply({
-          content: "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).",
+          content: "⚠️ Please finish the **Payment Proof** upload first (or wait 5 minutes).",
           flags: MessageFlags.Ephemeral
         });
       }
+
 
 
       const session = getPendingLabelSession(buyerDiscordId, recordId);
@@ -1118,9 +1119,15 @@ export function registerMemberWtbClaimFlow(client) {
         return safeReplyEphemeral(interaction, "❌ You are not authorized to upload a label for this deal.");
       }
       
-      if (hasActiveAnySession(buyerDiscordId, recordId)) {
-        return safeReplyEphemeral(interaction, "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).");
+      // ✅ Allow the label session itself.
+      // Only block if there's a PAYMENT PROOF session still active for this same order.
+      if (getPendingPaymentSession(buyerDiscordId, recordId)) {
+        return safeReplyEphemeral(
+          interaction,
+          "⚠️ You have another active **Payment Proof** session. Please upload the proof first (or wait 5 minutes)."
+        );
       }
+
 
       setPendingLabelSession({ buyerDiscordId, recordId, tracking });
       return safeReplyEphemeral(interaction, "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.");
