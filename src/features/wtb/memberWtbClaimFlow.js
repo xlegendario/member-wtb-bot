@@ -801,22 +801,31 @@ export function registerMemberWtbClaimFlow(client) {
           const lines = [
             `✅ Your WTB has been **matched** and we are ready to ship.`,
             ``,
+            `**Order:** ${orderId || "-"}`,
+            `**Product:** ${productName || "-"}`,
+            `**SKU:** ${sku || "-"}`,
+            `**Size:** ${size || "-"}`,
+            ``,
             `**Amount to pay (before shipping):** €${Number(finalAmount || 0).toFixed(2)}`,
             ``,
             `**Payment method:**`,
-            ...(iban ? [`• **IBAN:** ${iban} (${beneficiary})`] : []),
+            ...(iban ? [`• **IBAN:** ${iban} to ${beneficiary}`] : []),
             ...(paypal ? [`• **PayPal:** ${paypal}`] : []),
             ``,
             `Once paid, reply here with proof of payment.`,
-            `Then click **Upload Label** to submit tracking + label file.`
+            ``,
+            `After that:.`,
+            `1. Click **Upload Label** to submit the **UPS Tracking Number**.`,
+            `2. Drop the **UPS Label PDF** in the chat, so it will be send to the seller.`
           ].filter(Boolean);
+
 
           const components = [
             new ActionRowBuilder().addComponents(
               new ButtonBuilder()
                 .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
                 .setLabel("Upload Label")
-                .setStyle(ButtonStyle.Danger)
+                .setStyle(ButtonStyle.Secondary)
             )
           ];
 
@@ -843,8 +852,7 @@ export function registerMemberWtbClaimFlow(client) {
 
       try {
         await interaction.channel.send(
-          `✅ **Deal confirmed.** Buyer has been notified for payment + label upload${dmOk ? "" : " (DM failed)"}.\n` +
-            `Waiting for buyer to upload tracking + label in DM.`
+          `✅ **Deal confirmed.** Buyer has been notified for label upload${dmOk ? "" : " (DM failed)"}.`
         );
       } catch (_) {}
 
