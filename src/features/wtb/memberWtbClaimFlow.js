@@ -779,7 +779,7 @@ export function registerMemberWtbClaimFlow(client) {
           const dmOk = await safeSendDM(client, buyerDiscordId, dmPayload);
           if (dmOk) {
             // store that THIS buyer is allowed to upload label for THIS record
-            pendingBuyerLabelMap.set(buyerDiscordId, { recordId: data.recordId, tracking: "", createdAt: 0 });
+            pendingBuyerLabelMap.set(buyerDiscordId, { recordId: data.recordId, tracking: "", createdAt: nowMs() });
           }
 
           // stamp in Airtable (optional but recommended)
@@ -842,8 +842,15 @@ export function registerMemberWtbClaimFlow(client) {
       }
     
       const recordId = String(interaction.customId).split(":")[1];
-      const tracking = String(interaction.fields.getTextInputValue("tracking") || "").trim();
     
+      // ✅ security: this buyer must be allowed to upload for THIS recordId
+      const pendingBefore = pendingBuyerLabelMap.get(interaction.user.id);
+      if (!pendingBefore || pendingBefore.recordId !== recordId) {
+        return interaction.editReply("❌ This upload is not linked to your WTB. Please click **Upload Label** from the latest bot DM.");
+      }
+    
+      const tracking = String(interaction.fields.getTextInputValue("tracking") || "").trim();
+
       if (!tracking.toUpperCase().startsWith("1Z")) {
         return interaction.editReply('❌ Invalid UPS tracking. It must start with **"1Z"**.');
       }
