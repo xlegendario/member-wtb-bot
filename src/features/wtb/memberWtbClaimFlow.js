@@ -365,6 +365,13 @@ export function registerMemberWtbClaimFlow(client) {
       const size = asText(wtbRec.get("Size")).trim();
       const brand = asText(wtbRec.get("Brand")).trim();
 
+      // ✅ ADD THIS
+      const orderId = String(wtbRec.get("Order ID") || wtbRec.get("OrderId") || "").trim();
+      
+      const productName =
+        String(wtbRec.get("Product Name") || "").trim() ||
+        [brand, sku].filter(Boolean).join(" ").trim();
+
       const marginPayout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_MARGIN));
       const vat0Payout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_VAT0));
 
