@@ -262,18 +262,27 @@ async function safeDeferEphemeral(interaction) {
 
 
 
-async function safeReplyEphemeral(interaction, content) {
+async function safeReplyEphemeral(interaction, payload) {
   try {
+    const data = typeof payload === "string"
+      ? { content: payload }
+      : (payload || {});
+
+    // Force ephemeral by flags (safe)
+    if (!data.flags) data.flags = MessageFlags.Ephemeral;
+
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(content);
+      await interaction.editReply(data);
     } else {
-      await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+      await interaction.reply(data);
     }
   } catch (e) {
     if (e?.code === 10062) return;
+    if (e?.code === 40060) return; // already acked somewhere else
     console.error("safeReplyEphemeral failed:", e);
   }
 }
+
 
 async function safeEditMessage(msg, patch) {
   try {
@@ -1254,10 +1263,9 @@ export function registerMemberWtbClaimFlow(client) {
       
       const jumpRow = dmJumpRow(prev.channelId, prev.messageId);
       
-      return interaction.reply({
+      return safeReplyEphemeral(interaction, {
         content: "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.",
-        components: jumpRow ? [jumpRow] : [],
-        flags: MessageFlags.Ephemeral
+        components: jumpRow ? [jumpRow] : []
       });
     }
   });
