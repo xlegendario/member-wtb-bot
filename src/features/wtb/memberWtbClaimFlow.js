@@ -825,7 +825,7 @@ export function registerMemberWtbClaimFlow(client) {
               new ButtonBuilder()
                 .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
                 .setLabel("Upload Label")
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(ButtonStyle.Success)
             )
           ];
 
