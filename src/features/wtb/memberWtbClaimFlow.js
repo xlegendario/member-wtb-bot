@@ -334,6 +334,7 @@ async function buildMakePayload({ recordId, client }) {
 
   const dealChannelId = String(rec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
   const claimMessageUrl = String(rec.get(FIELD_CLAIM_MESSAGE_URL) || "").trim();
+  const sellerRecordId = getLinkedRecordId(rec.get(FIELD_CLAIMED_SELLER));
 
   return {
     orderId,
@@ -350,6 +351,7 @@ async function buildMakePayload({ recordId, client }) {
     recordId,
     dealChannelId,
     sellerDiscordId,
+    sellerRecordId, // ✅ ADD THIS BACK
     lockedPayout: payout,
     claimMessageUrl
   };
