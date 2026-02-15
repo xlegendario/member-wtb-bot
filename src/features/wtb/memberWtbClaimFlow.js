@@ -55,6 +55,16 @@ const FIELD_CURRENT_PAYOUT_VAT0 = "Current Payout VAT0";     // <-- change if yo
 // locked fields (these are written when a seller claims)
 const FIELD_LOCKED_PAYOUT_VAT0 = "Locked Payout VAT0";
 
+// ---- Buyer payment fields (Member WTBs) ----
+const FIELD_BUYER_DISCORD_ID = "Buyer Discord ID";
+const FIELD_BUYER_COUNTRY = "Buyer Country";
+const FIELD_BUYER_VAT_ID = "Buyer VAT ID";
+
+const FIELD_LOCKED_BUYER_PRICE = "Locked Buyer Price";
+const FIELD_LOCKED_BUYER_PRICE_VAT0 = "Locked Buyer Price VAT0";
+
+const FIELD_BUYER_PAYMENT_REQUESTED_AT = "Buyer Payment Requested At";
+
 
 // Discord config
 const DEAL_CATEGORY_IDS = (process.env.MEMBER_WTB_DEAL_CATEGORY_IDS || "")
@@ -159,6 +169,45 @@ function getLinkedRecordId(v) {
 
   return "";
 }
+
+function firstText(v) {
+  if (v == null) return "";
+  if (typeof v === "string" || typeof v === "number") return String(v).trim();
+  if (Array.isArray(v) && v.length) return firstText(v[0]);
+  if (typeof v === "object" && v.name) return String(v.name).trim();
+  if (typeof v === "object" && v.text) return String(v.text).trim();
+  return String(v).trim();
+}
+
+function computeBuyerCharge({ sellerVatType, buyerCountry, buyerVatId, buyerPrice, buyerPriceVat0 }) {
+  const sv = String(sellerVatType || "").trim().toUpperCase();
+  const country = String(buyerCountry || "").trim().toUpperCase();
+  const vatId = String(buyerVatId || "").trim();
+
+  const isCompany = !!vatId; // ✅ your rule: VAT ID present = company
+
+  // Seller VAT0 -> always VAT0 buyer price
+  if (sv === "VAT0") return buyerPriceVat0 ?? buyerPrice;
+
+  // Seller VAT21/Margin AND EU B2B outside NL -> use VAT0 buyer price
+  if (isCompany && country && country !== "NL") return buyerPriceVat0 ?? buyerPrice;
+
+  // Otherwise normal price
+  return buyerPrice;
+}
+
+async function safeSendDM(client, discordUserId, payload) {
+  try {
+    const u = await client.users.fetch(discordUserId);
+    if (!u) return false;
+    await u.send(payload);
+    return true;
+  } catch (e) {
+    console.warn("DM failed:", e?.message || e);
+    return false;
+  }
+}
+
 
 
 export function registerMemberWtbClaimFlow(client) {
@@ -569,6 +618,7 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_SELLER]: [],
         [FIELD_LOCKED_PAYOUT]: null,
         [FIELD_LOCKED_PAYOUT_VAT0]: null,
+        [FIELD_BUYER_PAYMENT_REQUESTED_AT]: null,
       
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false,
       
@@ -652,6 +702,77 @@ export function registerMemberWtbClaimFlow(client) {
         console.error("Error calling Make webhook:", e);
         return interaction.editReply("❌ Could not reach Make webhook.");
       }
+
+      // ---------------- Buyer payment request DM ----------------
+      try {
+        // pull buyer info from Airtable record
+        const buyerDiscordId = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
+        const buyerCountry = firstText(rec.get(FIELD_BUYER_COUNTRY));
+        const buyerVatId = firstText(rec.get(FIELD_BUYER_VAT_ID));
+
+        const buyerPrice = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE));
+        const buyerPriceVat0 = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE_VAT0));
+
+        if (!buyerDiscordId) {
+          console.warn(`No Buyer Discord ID on record ${data.recordId}`);
+        } else if (buyerPrice == null && buyerPriceVat0 == null) {
+          console.warn(`No buyer prices on record ${data.recordId}`);
+        } else {
+          const finalAmount = computeBuyerCharge({
+            sellerVatType: data.vatType,
+            buyerCountry,
+            buyerVatId,
+            buyerPrice,
+            buyerPriceVat0
+          });
+
+          const iban = process.env.PAYMENT_IBAN || "";
+          const paypal = process.env.PAYMENT_PAYPAL_EMAIL || "";
+          const beneficiary = process.env.PAYMENT_BENEFICIARY || "Payout by Kickz Caviar";
+
+          const glideBase = (process.env.GLIDE_WTB_BASE_URL || "").replace(/\/$/, "");
+          const glideParam = process.env.GLIDE_WTB_PARAM || "wtbId";
+          const glideUrl = glideBase ? `${glideBase}?${glideParam}=${data.recordId}` : "";
+
+          const lines = [
+            `✅ Your WTB has been **matched** and we are ready to ship.`,
+            ``,
+            `**Amount to pay (before shipping):** €${Number(finalAmount || 0).toFixed(2)}`,
+            ``,
+            `**Payment method:**`,
+            ...(iban ? [`• **IBAN:** ${iban} (${beneficiary})`] : []),
+            ...(paypal ? [`• **PayPal:** ${paypal}`] : []),
+            ``,
+            `Once paid, reply here with proof of payment.`,
+            `We will then send the shipping label request / next steps.`
+          ].filter(Boolean);
+
+          const dmPayload = {
+            content: lines.join("\n"),
+            components: glideUrl
+              ? [
+                  new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                      .setStyle(ButtonStyle.Link)
+                      .setLabel("Open WTB in Glide")
+                      .setURL(glideUrl)
+                  )
+                ]
+              : []
+          };
+
+          await safeSendDM(client, buyerDiscordId, dmPayload);
+
+          // stamp in Airtable (optional but recommended)
+          await base(WTB_TABLE).update(data.recordId, {
+            [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.warn("Buyer payment DM step failed:", e?.message || e);
+      }
+      // ----------------------------------------------------------
+
     
       // Optional: mark confirmed in Airtable
       try {
