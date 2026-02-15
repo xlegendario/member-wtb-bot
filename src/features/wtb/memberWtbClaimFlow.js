@@ -991,36 +991,62 @@ export function registerMemberWtbClaimFlow(client) {
         return interaction.reply({ content: "❌ You are not authorized for this deal.", flags: MessageFlags.Ephemeral });
       }
     
-      // Prevent multiple sessions (proof or label) for this order
-      if (hasActiveAnySession(buyerDiscordId, recordId)) {
+      // ✅ If payment proof already exists, unlock Upload Label button immediately
+      const proof = rec.get(FIELD_PAYMENT_PROOF);
+      const hasProof = Array.isArray(proof) && proof.length;
+      if (hasProof) {
+        try {
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
+              .setLabel("Upload Payment Proof")
+              .setStyle(ButtonStyle.Primary)
+              .setDisabled(true),
+            new ButtonBuilder()
+              .setCustomId(`${BTN_UPLOAD_LABEL}:${recordId}`)
+              .setLabel("Upload Label")
+              .setStyle(ButtonStyle.Success)
+              .setDisabled(false)
+          );
+          await interaction.message.edit({ components: [row] }).catch(() => {});
+        } catch (_) {}
+    
         return interaction.reply({
-          content: "⚠️ There is already an active upload session for this order. Please finish it first (or wait 5 minutes).",
+          content: "✅ Payment proof already received. You can now click **Upload Label**.",
           flags: MessageFlags.Ephemeral
         });
       }
     
-      // If proof already exists, just unlock label (no new session)
-      const proof = rec.get(FIELD_PAYMENT_PROOF);
-      const hasProof = Array.isArray(proof) && proof.length;
-      if (hasProof) {
+      // ✅ Block if a LABEL session for this same order is active (prevents mixing steps)
+      const existingLabel = getPendingLabelSession(buyerDiscordId, recordId);
+      if (existingLabel) {
         return interaction.reply({
-          content: "✅ Payment proof already received. You can proceed with Upload Label.",
+          content: "⚠️ You already started **Upload Label** for this order. Please finish it first (or wait 5 minutes).",
           flags: MessageFlags.Ephemeral
         });
       }
-
-      // Block any other active payment session for this buyer (prevents mismatch)
+    
+      // ✅ Block any other active PAYMENT session for this buyer (OTHER orders only)
       for (const s of pendingBuyerPaymentMap.values()) {
-        if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) {
+        if (
+          s.buyerDiscordId === buyerDiscordId &&
+          s.recordId !== recordId &&
+          nowMs() <= s.expiresAt
+        ) {
           return interaction.reply({
-            content: "⚠️ You already have an active **Payment Proof** session. Please finish it first (or wait 5 minutes).",
+            content: "⚠️ You already have an active **Payment Proof** session for another order. Please finish it first (or wait 5 minutes).",
             flags: MessageFlags.Ephemeral
           });
         }
       }
-
-      // Start proof session (we’ll capture the next attachment in DM)
-      setPendingPaymentSession({ buyerDiscordId, recordId, messageId: interaction.message?.id || "" });
+    
+      // ✅ Start/refresh proof session for THIS order (keep messageId so we can edit the DM buttons later)
+      const existingPay = getPendingPaymentSession(buyerDiscordId, recordId);
+      setPendingPaymentSession({
+        buyerDiscordId,
+        recordId,
+        messageId: existingPay?.messageId || interaction.message?.id || ""
+      });
     
       return interaction.reply({
         content: "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
@@ -1028,7 +1054,6 @@ export function registerMemberWtbClaimFlow(client) {
       });
     }
 
-    
     // 7) Buyer DM: click Upload Label -> modal for tracking
     if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_LABEL}:`)) {
       if (interaction.inGuild()) {
@@ -1044,6 +1069,17 @@ export function registerMemberWtbClaimFlow(client) {
       } catch (_) {
         return interaction.reply({ content: "❌ Invalid deal reference.", flags: MessageFlags.Ephemeral });
       }
+
+      // ✅ BLOCK if label already received
+      const existingLabel = rec.get(FIELD_SHIPPING_LABEL);
+      const hasLabelAlready = Array.isArray(existingLabel) && existingLabel.length;
+      if (hasLabelAlready) {
+        return interaction.reply({
+          content: "✅ We already received your shipping label for this order.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
 
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
@@ -1235,13 +1271,31 @@ export function registerMemberWtbClaimFlow(client) {
         if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) sessions.push(s);
       }
       if (!sessions.length) {
-        await message.channel.send("❌ No active upload session found. Please click **Upload Payment Proof** or **Upload Label** first.");
+        await message.channel.send("❌ No active upload session found. Please click **Upload Label** first.");
         return;
       }
+      
+      if (sessions.length > 1) {
+        // ✅ cleanup: keep only the newest session, delete the others
+        sessions.sort((a, b) => b.createdAt - a.createdAt);
+        // keep newest
+      
+        for (const s of sessions.slice(1)) {
+          clearPendingLabelSession(s.buyerDiscordId, s.recordId);
+        }
+      
+        await message.channel.send(
+          "⚠️ You had multiple active label sessions. I kept the newest one. Please upload the label file again now."
+        );
+      
+        // continue with the newest session
+      }
 
-
+      
       sessions.sort((a, b) => b.createdAt - a.createdAt);
       const pending = sessions[0];
+
+
 
       if (!pending.tracking) {
         await message.channel.send("❌ Please click **Upload Label** first and submit the tracking number.");
@@ -1257,6 +1311,11 @@ export function registerMemberWtbClaimFlow(client) {
         return;
       }
 
+      // ✅ detect if label already existed BEFORE we overwrite it
+      const existingLabelBefore = rec.get(FIELD_SHIPPING_LABEL);
+      const alreadyHadLabel = Array.isArray(existingLabelBefore) && existingLabelBefore.length;
+
+
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
@@ -1270,19 +1329,22 @@ export function registerMemberWtbClaimFlow(client) {
           [FIELD_SHIPPING_LABEL]: [{ url: att.url, filename: att.name || "label.pdf" }]
         });
 
-        // ✅ Send Make webhook ONLY after label upload is saved
-        try {
-          const payload = await buildMakePayload({ recordId: pending.recordId, client });
+        // ✅ Send Make webhook ONLY once (first label upload)
+        if (!alreadyHadLabel) {
+          try {
+            const payload = await buildMakePayload({ recordId: pending.recordId, client });
         
-          await fireMakeWebhook("label_uploaded", {
-            ...payload,
-            trackingNumber: pending.tracking,
-            labelUrl: att.url,
-            labelFilename: att.name || "label.pdf"
-          });
-        } catch (e) {
-          console.error("Failed building/sending Make webhook (label):", e);
+            await fireMakeWebhook("label_uploaded", {
+              ...payload,
+              trackingNumber: pending.tracking,
+              labelUrl: att.url,
+              labelFilename: att.name || "label.pdf"
+            });
+          } catch (e) {
+            console.error("Failed building/sending Make webhook (label):", e);
+          }
         }
+
 
 
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
