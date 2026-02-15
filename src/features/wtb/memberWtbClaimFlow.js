@@ -91,9 +91,16 @@ const ADMIN_ROLE_IDS = (process.env.ADMIN_ROLE_IDS || "")
   .filter(Boolean);
 
 const MAKE_MEMBER_WTB_WEBHOOK_URL = process.env.MAKE_MEMBER_WTB_WEBHOOK_URL || "";
+console.log("[ENV] MAKE_MEMBER_WTB_WEBHOOK_URL:", MAKE_MEMBER_WTB_WEBHOOK_URL ? "SET" : "MISSING");
+
 
 async function fireMakeWebhook(eventType, payload) {
-  if (!MAKE_MEMBER_WTB_WEBHOOK_URL) return;
+  if (!MAKE_MEMBER_WTB_WEBHOOK_URL) {
+    console.log(`[Make webhook ${eventType}] SKIP (URL missing)`);
+    return;
+  }
+
+  console.log(`[Make webhook ${eventType}] POST ->`, MAKE_MEMBER_WTB_WEBHOOK_URL);
 
   try {
     const res = await fetch(MAKE_MEMBER_WTB_WEBHOOK_URL, {
@@ -101,6 +108,8 @@ async function fireMakeWebhook(eventType, payload) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ eventType, ...payload })
     });
+
+    console.log(`[Make webhook ${eventType}] status:`, res.status);
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -274,17 +283,23 @@ async function safeEditMessage(msg, patch) {
   }
 }
 
-function dealJumpUrlFromRec(rec) {
-  const chId = String(rec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
-  const msgId = String(rec.get(FIELD_CLAIMED_MESSAGE_ID) || "").trim();
-  if (!chId || !msgId) return "";
-  return `https://discord.com/channels/${CONFIG.guildId}/${chId}/${msgId}`;
+function dmJumpUrl(dmChannelId, dmMessageId) {
+  if (!dmChannelId || !dmMessageId) return "";
+  return `https://discord.com/channels/@me/${dmChannelId}/${dmMessageId}`;
 }
 
-function withDealLinkText(text, dealUrl) {
-  if (!dealUrl) return text;
-  return `${text}\n\n🔗 Open deal: ${dealUrl}`;
+function dmJumpRow(dmChannelId, dmMessageId) {
+  const url = dmJumpUrl(dmChannelId, dmMessageId);
+  if (!url) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setStyle(ButtonStyle.Link)
+      .setURL(url)
+      .setLabel("Open buttons message")
+  );
 }
+
 
 
 async function buildMakePayload({ recordId, client }) {
@@ -342,10 +357,10 @@ export function registerMemberWtbClaimFlow(client) {
   const sellerMap = new Map(); // channelId -> claim context
   const uploadedImagesMap = new Map(); // channelId -> [urls]
 
-  // ✅ Store the DM message id per buyer+record (so we can edit buttons later)
-  // IMPORTANT: do NOT start the payment session at DM send time.
-  const buyerDmMsgMap = new Map(); // key: buyerId:recordId -> dmMessageId
+  // ✅ Store DM "buttons message" per buyer+record (so we can jump/edit later)
+  const buyerDmMsgMap = new Map(); // key -> { messageId, channelId }
   const dmKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
+
 
 
   // buyer label sessions
@@ -358,12 +373,13 @@ export function registerMemberWtbClaimFlow(client) {
   const PENDING_PAYMENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const payKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
   
-  function setPendingPaymentSession({ buyerDiscordId, recordId, messageId }) {
+  function setPendingPaymentSession({ buyerDiscordId, recordId, messageId, channelId }) {
     const now = nowMs();
     pendingBuyerPaymentMap.set(payKey(buyerDiscordId, recordId), {
       buyerDiscordId,
       recordId,
       messageId: messageId || "",
+      channelId: channelId || "",
       createdAt: now,
       expiresAt: now + PENDING_PAYMENT_TTL_MS
     });
@@ -389,12 +405,14 @@ export function registerMemberWtbClaimFlow(client) {
     return !!getPendingPaymentSession(buyerDiscordId, recordId) || !!getPendingLabelSession(buyerDiscordId, recordId);
   }
 
-  function setPendingLabelSession({ buyerDiscordId, recordId, tracking }) {
+  function setPendingLabelSession({ buyerDiscordId, recordId, tracking, messageId, channelId }) {
     const now = nowMs();
     pendingBuyerLabelMap.set(pendingKey(buyerDiscordId, recordId), {
       buyerDiscordId,
       recordId,
       tracking: tracking || "",
+      messageId: messageId || "",
+      channelId: channelId || "",
       createdAt: now,
       expiresAt: now + PENDING_LABEL_TTL_MS
     });
@@ -750,6 +768,17 @@ export function registerMemberWtbClaimFlow(client) {
 
     // 5) Cancel deal -> reset airtable + re-enable listing + delete channel
     if (interaction.isButton() && interaction.customId === "member_wtb_cancel_deal") {
+      // ✅ Admin-only cancel (prevents seller flaking)
+      const memberRoles = interaction.member?.roles?.cache?.map((r) => r.id) || [];
+      const isAdmin = ADMIN_ROLE_IDS.length ? ADMIN_ROLE_IDS.some((id) => memberRoles.includes(id)) : true;
+    
+      if (!isAdmin) {
+        return interaction.reply({
+          content: "❌ Only staff can cancel a deal. Please tag an admin if something is wrong.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+      
       const ok = await safeDeferEphemeral(interaction);
       if (!ok) return;
 
@@ -962,7 +991,11 @@ export function registerMemberWtbClaimFlow(client) {
       
           if (dmOk) {
             // ✅ store DM messageId ONLY (do NOT start a payment session yet)
-            buyerDmMsgMap.set(dmKey(buyerDiscordId, data.recordId), dmMsg.id);
+            buyerDmMsgMap.set(dmKey(buyerDiscordId, data.recordId), {
+              messageId: dmMsg.id,
+              channelId: dmMsg.channel.id
+            });
+
           
             await base(WTB_TABLE).update(data.recordId, {
               [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
@@ -1064,15 +1097,16 @@ export function registerMemberWtbClaimFlow(client) {
       }
     
       // ✅ Start/refresh proof session for THIS order (keep messageId so we can edit the DM buttons later)
-      const storedDmMsgId = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId)) || "";
+      const stored = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId));
+      
       setPendingPaymentSession({
         buyerDiscordId,
         recordId,
-        // ✅ prefer the original DM message id (so we edit the correct message)
-        messageId: storedDmMsgId || interaction.message?.id || ""
+        messageId: stored?.messageId || interaction.message?.id || "",
+        channelId: stored?.channelId || interaction.channelId || ""
       });
+      
 
-    
       return interaction.reply({
         content: "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
         flags: MessageFlags.Ephemeral
@@ -1132,7 +1166,27 @@ export function registerMemberWtbClaimFlow(client) {
 
 
       const session = getPendingLabelSession(buyerDiscordId, recordId);
-      if (!session) setPendingLabelSession({ buyerDiscordId, recordId, tracking: "" });
+
+      // Always ensure we store the DM message info (this is the buttons message)
+      if (!session) {
+        setPendingLabelSession({
+          buyerDiscordId,
+          recordId,
+          tracking: "",
+          messageId: interaction.message?.id || "",
+          channelId: interaction.channelId || ""
+        });
+      } else {
+        // refresh message info in case it changed
+        setPendingLabelSession({
+          buyerDiscordId,
+          recordId,
+          tracking: session.tracking || "",
+          messageId: session.messageId || interaction.message?.id || "",
+          channelId: session.channelId || interaction.channelId || ""
+        });
+      }
+
 
       const modal = new ModalBuilder().setCustomId(`${MODAL_UPLOAD_LABEL}:${recordId}`).setTitle("Upload UPS Label");
 
@@ -1175,28 +1229,31 @@ export function registerMemberWtbClaimFlow(client) {
         return safeReplyEphemeral(interaction, "❌ Invalid deal reference.");
       }
 
-      const dealUrl = dealJumpUrlFromRec(rec);
+      // Update the existing label session and keep the DM buttons message info
+     const prev = getPendingLabelSession(buyerDiscordId, recordId);
 
-      const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
-      if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
-        return safeReplyEphemeral(interaction, "❌ You are not authorized to upload a label for this deal.");
-      }
-      
-      // ✅ Allow the label session itself.
-      // Only block if there's a PAYMENT PROOF session still active for this same order.
-      if (getPendingPaymentSession(buyerDiscordId, recordId)) {
+      if (!prev?.messageId || !prev?.channelId) {
         return safeReplyEphemeral(
           interaction,
-          "⚠️ You have another active **Payment Proof** session. Please upload the proof first (or wait 5 minutes)."
+          "❌ Could not locate the buttons message. Please click **Upload Label** again from the buttons message."
         );
       }
-
-
-      setPendingLabelSession({ buyerDiscordId, recordId, tracking });
-      return safeReplyEphemeral(
-        interaction,
-        withDealLinkText("✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.", dealUrl)
-      );
+      
+      setPendingLabelSession({
+        buyerDiscordId,
+        recordId,
+        tracking,
+        messageId: prev.messageId,
+        channelId: prev.channelId
+      });
+      
+      const jumpRow = dmJumpRow(prev.channelId, prev.messageId);
+      
+      return interaction.reply({
+        content: "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.",
+        components: jumpRow ? [jumpRow] : [],
+        flags: MessageFlags.Ephemeral
+      });
     }
   });
 
@@ -1246,8 +1303,6 @@ export function registerMemberWtbClaimFlow(client) {
           await message.channel.send("❌ Could not find your deal anymore.");
           return;
         }
-
-        const dealUrl = dealJumpUrlFromRec(rec);
       
         const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
@@ -1293,9 +1348,12 @@ export function registerMemberWtbClaimFlow(client) {
       
         clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
         buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
-        await message.channel.send(
-          withDealLinkText("✅ Payment proof received. You can now click **Upload Label**.", dealUrl)
-        );
+        const jumpRow = dmJumpRow(activePay.channelId || message.channel.id, activePay.messageId);
+
+        await message.channel.send({
+          content: "✅ Payment proof received. You can now click **Upload Label**.",
+          components: jumpRow ? [jumpRow] : []
+        });
         return;
       }
       
@@ -1353,6 +1411,12 @@ export function registerMemberWtbClaimFlow(client) {
       // ✅ detect if label already existed BEFORE we overwrite it
       const existingLabelBefore = rec.get(FIELD_SHIPPING_LABEL);
       const alreadyHadLabel = Array.isArray(existingLabelBefore) && existingLabelBefore.length;
+      console.log("[Label] pre-check", {
+        recordId: pending.recordId,
+        alreadyHadLabel,
+        existingLabelCount: Array.isArray(existingLabelBefore) ? existingLabelBefore.length : 0
+      });
+
 
 
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
@@ -1370,11 +1434,52 @@ export function registerMemberWtbClaimFlow(client) {
           [FIELD_SHIPPING_LABEL]: [{ url: att.url, filename: att.name || "label.pdf" }]
         });
 
+        // ✅ Disable DM buttons after label received (so user can't spam Upload Label)
+        try {
+          const dmMsgId = pending.messageId;
+          const dmChannelId = pending.channelId;
+        
+          if (dmMsgId && dmChannelId) {
+            const dmChannel = await client.channels.fetch(dmChannelId).catch(() => null);
+            if (dmChannel?.isTextBased()) {
+              const dmMsg = await dmChannel.messages.fetch(dmMsgId).catch(() => null);
+              if (dmMsg) {
+                const recordId = pending.recordId;
+        
+                const row = new ActionRowBuilder().addComponents(
+                  new ButtonBuilder()
+                    .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
+                    .setLabel("Upload Payment Proof")
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(true),
+                  new ButtonBuilder()
+                    .setCustomId(`${BTN_UPLOAD_LABEL}:${recordId}`)
+                    .setLabel("Upload Label")
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(true)
+                );
+        
+                await dmMsg.edit({ components: [row] });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Failed disabling DM buttons after label:", e?.message || e);
+        }
+
+
         // ✅ Send Make webhook ONLY once (first label upload)
         if (!alreadyHadLabel) {
           try {
             const payload = await buildMakePayload({ recordId: pending.recordId, client });
-        
+
+            console.log("[Make] label_uploaded check", {
+              recordId: pending.recordId,
+              alreadyHadLabel,
+              urlSet: !!MAKE_MEMBER_WTB_WEBHOOK_URL
+            });
+            
+                        
             await fireMakeWebhook("label_uploaded", {
               ...payload,
               trackingNumber: pending.tracking,
