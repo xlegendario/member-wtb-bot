@@ -1016,7 +1016,18 @@ export function registerMemberWtbClaimFlow(client) {
           const ch = await client.channels.fetch(dealChannelId).catch(() => null);
           if (ch?.isTextBased()) {
             await ch.send({
-              content: `📦 **Shipping label uploaded by buyer**\n• Tracking: **${pending.tracking}**\n• Buyer: <@${buyerDiscordId}>`,
+              content:
+                `📦 **Shipping label received**\n` +
+                `• Tracking: **${pending.tracking}**\n\n` +
+            
+                `📬\n` +
+                `Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings. **REMOVE ANY PRICETAGS!**\n\n` +
+            
+                `❌\n` +
+                `Do not include anything inside the box, as this is not a standard deal.\n\n` +
+            
+                `📸\n` +
+                `Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`,
               files: [{ attachment: att.url, name: att.name || "label.pdf" }]
             });
           }
