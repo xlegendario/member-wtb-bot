@@ -431,10 +431,12 @@ export function registerMemberWtbClaimFlow(client) {
         .setTitle("💸 Member WTB Deal Claimed")
         .setColor(0xffed00)
         .setDescription(
-          `**SKU:** ${sku || "-"}\n` +
+          `**Order:** ${orderId || "-"}\n` +
+            `**Product:** ${productName || "-"}\n` +
+            `**SKU:** ${sku || "-"}\n` +
             `**Size:** ${size || "-"}\n` +
             `**Brand:** ${brand || "-"}\n` +
-            `**Locked Payout:** €${lockedPayout.toFixed(2)}\n` +
+            `**Payout:** €${lockedPayout.toFixed(2)}\n` +
             `**VAT Type:** ${vatType}\n` +
             `**Seller (claimed with):** ${sellerId}`
         );
