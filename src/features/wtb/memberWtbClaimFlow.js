@@ -806,7 +806,7 @@ export function registerMemberWtbClaimFlow(client) {
             `**SKU:** ${sku || "-"}`,
             `**Size:** ${size || "-"}`,
             ``,
-            `**Amount to pay (before shipping):** €${Number(finalAmount || 0).toFixed(2)}`,
+            `**Amount to pay:** €${Number(finalAmount || 0).toFixed(2)}`,
             ``,
             `**Payment method:**`,
             ...(iban ? [`• **IBAN:** ${iban} to ${beneficiary}`] : []),
