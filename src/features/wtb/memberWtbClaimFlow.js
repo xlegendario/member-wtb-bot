@@ -932,7 +932,7 @@ export function registerMemberWtbClaimFlow(client) {
       }
 
       setPendingLabelSession({ buyerDiscordId, recordId, tracking });
-      return safeReplyEphemeral(interaction, "✅ Tracking saved. Now upload the **label file** (PDF/image) here in DM.");
+      return safeReplyEphemeral(interaction, "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.");
     }
   });
 
