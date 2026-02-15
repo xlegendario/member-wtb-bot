@@ -36,10 +36,12 @@ function getBrandText(brand) {
 // helpers (put near top of file)
 function fmtMoney(v) {
   if (v == null || v === "") return "—";
-  const n = Number(String(v).replace(",", "."));
+
+  // handle numbers + strings like "157.02479338842977" or "157,02" or "€157,02"
+  const n = Number(String(v).replace("€", "").replace(/\s/g, "").replace(",", "."));
   if (!Number.isFinite(n)) return "—";
-  // keep decimals only if needed
-  return `€${Number.isInteger(n) ? n : n.toFixed(2).replace(/\.00$/, "")}`;
+
+  return `€${n.toFixed(2)}`;
 }
 
 function payoutLine(margin, vat0) {
@@ -81,13 +83,15 @@ export function registerMemberWtbQuickDealCreate(app, client) {
         sku,
         size,
         brand,
+        productName,          // ✅ add this
         currentPayout,
         maxPayout,
         currentPayoutVat0,
-        maxPayoutVat0,   
+        maxPayoutVat0,
         timeToMaxPayout,
         imageUrl
       } = req.body || {};
+
 
       if (!recordId || !sku || !size) {
         return res.status(400).send("Missing recordId / sku / size");
@@ -108,12 +112,13 @@ export function registerMemberWtbQuickDealCreate(app, client) {
       }
 
       const embed = new EmbedBuilder()
-        .setTitle("⚡ Quick Deal (Member WTB)")
+        .setTitle("⚡ Quick Deal")
         .setColor(0xffed00)
         .setDescription(
-          `**SKU:** ${String(sku).trim().toUpperCase()}\n` +
-          `**Size:** ${String(size).trim()}\n` +
-          `**Brand:** ${brandText || "—"}`
+          `**${productName || '-'}**\n` +
+          `${String(sku).trim().toUpperCase()}\n` +
+          `${String(size).trim()}\n` +
+          `${brandText || "—"}`
         )
         .addFields(
           { name: "Current Payout", value: payoutLine(currentPayout, currentPayoutVat0), inline: true },
