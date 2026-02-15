@@ -837,6 +837,7 @@ export function registerMemberWtbClaimFlow(client) {
     if (interaction.isModalSubmit() && String(interaction.customId || "").startsWith(`${MODAL_UPLOAD_LABEL}:`)) {
       await interaction.deferReply({ ephemeral: true });
     
+      // Must be in DM
       if (interaction.inGuild()) {
         return interaction.editReply("❌ Please do this in DM.");
       }
@@ -846,31 +847,38 @@ export function registerMemberWtbClaimFlow(client) {
       // ✅ security: this buyer must be allowed to upload for THIS recordId
       const pendingBefore = pendingBuyerLabelMap.get(interaction.user.id);
       if (!pendingBefore || pendingBefore.recordId !== recordId) {
-        return interaction.editReply("❌ This upload is not linked to your WTB. Please click **Upload Label** from the latest bot DM.");
+        return interaction.editReply(
+          "❌ This upload is not linked to your WTB. Please click **Upload Label** from the latest bot DM."
+        );
       }
     
       const tracking = String(interaction.fields.getTextInputValue("tracking") || "").trim();
-
+    
       if (!tracking.toUpperCase().startsWith("1Z")) {
         return interaction.editReply('❌ Invalid UPS tracking. It must start with **"1Z"**.');
       }
     
-      // Set pending state that *includes* tracking
+      // ✅ Set pending state that includes tracking + timestamp
       pendingBuyerLabelMap.set(interaction.user.id, { recordId, tracking, createdAt: nowMs() });
-
+    
       // ✅ auto-expire after 15 minutes
       setTimeout(() => {
         const cur = pendingBuyerLabelMap.get(interaction.user.id);
         if (!cur) return;
-      
+    
         // only delete if it's still the same session
-        if (cur.recordId === recordId && cur.tracking === tracking && nowMs() - cur.createdAt >= 15 * 60 * 1000) {
+        if (
+          cur.recordId === recordId &&
+          cur.tracking === tracking &&
+          nowMs() - cur.createdAt >= 15 * 60 * 1000
+        ) {
           pendingBuyerLabelMap.delete(interaction.user.id);
         }
       }, 15 * 60 * 1000);
-
+    
       return interaction.editReply("✅ Tracking saved. Now upload the **label file** (PDF/image) here in DM.");
     }
+
   });
 
   // 7) Count 6 pictures, then post Confirm button
