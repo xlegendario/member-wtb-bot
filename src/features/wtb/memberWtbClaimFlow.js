@@ -325,6 +325,12 @@ export function registerMemberWtbClaimFlow(client) {
   const sellerMap = new Map(); // channelId -> claim context
   const uploadedImagesMap = new Map(); // channelId -> [urls]
 
+  // ✅ Store the DM message id per buyer+record (so we can edit buttons later)
+  // IMPORTANT: do NOT start the payment session at DM send time.
+  const buyerDmMsgMap = new Map(); // key: buyerId:recordId -> dmMessageId
+  const dmKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
+
+
   // buyer label sessions
   const pendingBuyerLabelMap = new Map(); // key: buyerId:recordId -> session
   const PENDING_LABEL_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -938,9 +944,9 @@ export function registerMemberWtbClaimFlow(client) {
           dmOk = !!dmMsg;
       
           if (dmOk) {
-            // store DM messageId so we can edit it later to enable the button
-            setPendingPaymentSession({ buyerDiscordId, recordId: data.recordId, messageId: dmMsg.id });
-      
+            // ✅ store DM messageId ONLY (do NOT start a payment session yet)
+            buyerDmMsgMap.set(dmKey(buyerDiscordId, data.recordId), dmMsg.id);
+          
             await base(WTB_TABLE).update(data.recordId, {
               [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
             }).catch(() => {});
@@ -1041,12 +1047,14 @@ export function registerMemberWtbClaimFlow(client) {
       }
     
       // ✅ Start/refresh proof session for THIS order (keep messageId so we can edit the DM buttons later)
-      const existingPay = getPendingPaymentSession(buyerDiscordId, recordId);
+      const storedDmMsgId = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId)) || "";
       setPendingPaymentSession({
         buyerDiscordId,
         recordId,
-        messageId: existingPay?.messageId || interaction.message?.id || ""
+        // ✅ prefer the original DM message id (so we edit the correct message)
+        messageId: storedDmMsgId || interaction.message?.id || ""
       });
+
     
       return interaction.reply({
         content: "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
