@@ -124,6 +124,8 @@ function toChannelSlug(s) {
     .slice(0, 95);
 }
 
+
+
 async function pickCategoryWithSpace(guild, categoryIds) {
   if (!categoryIds.length) return null;
   await guild.channels.fetch();
@@ -249,6 +251,8 @@ async function safeDeferEphemeral(interaction) {
   }
 }
 
+
+
 async function safeReplyEphemeral(interaction, content) {
   try {
     if (interaction.deferred || interaction.replied) {
@@ -269,6 +273,19 @@ async function safeEditMessage(msg, patch) {
     console.warn("message.edit failed:", e?.message || e);
   }
 }
+
+function dealJumpUrlFromRec(rec) {
+  const chId = String(rec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
+  const msgId = String(rec.get(FIELD_CLAIMED_MESSAGE_ID) || "").trim();
+  if (!chId || !msgId) return "";
+  return `https://discord.com/channels/${CONFIG.guildId}/${chId}/${msgId}`;
+}
+
+function withDealLinkText(text, dealUrl) {
+  if (!dealUrl) return text;
+  return `${text}\n\n🔗 Open deal: ${dealUrl}`;
+}
+
 
 async function buildMakePayload({ recordId, client }) {
   const rec = await base(WTB_TABLE).find(recordId);
@@ -1158,6 +1175,8 @@ export function registerMemberWtbClaimFlow(client) {
         return safeReplyEphemeral(interaction, "❌ Invalid deal reference.");
       }
 
+      const dealUrl = dealJumpUrlFromRec(rec);
+
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
         return safeReplyEphemeral(interaction, "❌ You are not authorized to upload a label for this deal.");
@@ -1174,7 +1193,10 @@ export function registerMemberWtbClaimFlow(client) {
 
 
       setPendingLabelSession({ buyerDiscordId, recordId, tracking });
-      return safeReplyEphemeral(interaction, "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.");
+      return safeReplyEphemeral(
+        interaction,
+        withDealLinkText("✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.", dealUrl)
+      );
     }
   });
 
@@ -1224,6 +1246,8 @@ export function registerMemberWtbClaimFlow(client) {
           await message.channel.send("❌ Could not find your deal anymore.");
           return;
         }
+
+        const dealUrl = dealJumpUrlFromRec(rec);
       
         const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
@@ -1269,7 +1293,9 @@ export function registerMemberWtbClaimFlow(client) {
       
         clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
         buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
-        await message.channel.send("✅ Payment proof received. You can now click **Upload Label**.");
+        await message.channel.send(
+          withDealLinkText("✅ Payment proof received. You can now click **Upload Label**.", dealUrl)
+        );
         return;
       }
       
