@@ -688,23 +688,57 @@ export function registerMemberWtbClaimFlow(client) {
         return safeReplyEphemeral(interaction, "❌ Could not load Airtable record.");
       }
 
+      // Pull product bits
+      const sku = String(rec.get("SKU (API)") || rec.get("SKU") || "").trim();
+      const size = String(rec.get("Size") || "").trim();
+      const brand = getBrandText(rec.get("Brand"));
+      
+      // Optional imageUrl (from Airtable attachment field)
+      const pic = rec.get(FIELD_PICTURE);
+      const imageUrl =
+        Array.isArray(pic) && pic.length && pic[0]?.url ? pic[0].url : "";
+      
+      // Optional product name (if you have a dedicated field, use that instead)
+      const productName =
+        String(rec.get("Product Name") || "").trim() ||
+        [brand, sku].filter(Boolean).join(" ").trim();
+      
+      // If Make expects payout, send locked payout there
+      const payout = Number(data.lockedPayout || 0);
+      
+      // If Make expects sellerCode, send your Seller ID format (SE-xxxxx)
+      const sellerCode = String(data.sellerId || "").trim();
+      
+      // If Make expects discordUserId, send seller discord id
+      const discordUserId = String(data.sellerDiscordId || "").trim();
+      
+      // If you have an orderId field in Airtable, pass it. Otherwise blank.
+      const orderId = String(rec.get("Order ID") || rec.get("OrderId") || "").trim();
+      
       const payload = {
+        // ✅ keys Make expects (from your screenshot)
+        orderId,
+        productName,
+        sku,
+        size,
+        brand,
+        payout,
+        sellerCode,
+        discordUserId,
+        imageUrl,
+        vatType: String(data.vatType || "").trim(),
+      
+        // keep your existing useful fields too (optional but recommended)
         source: "Member WTB",
         recordId: data.recordId,
         dealChannelId: channelId,
-
         sellerRecordId: data.sellerRecordId,
         sellerDiscordId: data.sellerDiscordId,
         sellerId: data.sellerId,
-        vatType: data.vatType,
-
-        sku: String(rec.get("SKU (API)") || rec.get("SKU") || "").trim(),
-        size: String(rec.get("Size") || "").trim(),
-        brand: getBrandText(rec.get("Brand")),
-
-        lockedPayout: data.lockedPayout,
-        claimMessageUrl: rec.get(FIELD_CLAIM_MESSAGE_URL) || ""
+        lockedPayout: payout,
+        claimMessageUrl: String(rec.get(FIELD_CLAIM_MESSAGE_URL) || "").trim()
       };
+
 
       const hook = process.env.MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL || "";
       if (!hook) return safeReplyEphemeral(interaction, "❌ MAKE_MEMBER_WTB_CONFIRM_WEBHOOK_URL is not set in Render ENV.");
