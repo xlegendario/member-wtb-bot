@@ -765,7 +765,7 @@ export function registerMemberWtbClaimFlow(client) {
 
           // stamp in Airtable (optional but recommended)
           await base(WTB_TABLE).update(data.recordId, {
-            [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
+            [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date()
           }).catch(() => {});
         }
       } catch (e) {
