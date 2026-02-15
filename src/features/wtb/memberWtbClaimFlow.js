@@ -1167,25 +1167,30 @@ export function registerMemberWtbClaimFlow(client) {
 
       const session = getPendingLabelSession(buyerDiscordId, recordId);
 
+      // ✅ Prefer stored "buttons message" (from the DM we sent on confirm deal)
+      const stored = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId));
+      
+      const resolvedMessageId =
+        stored?.messageId ||
+        session?.messageId ||
+        interaction.message?.id ||
+        "";
+      
+      const resolvedChannelId =
+        stored?.channelId ||
+        session?.channelId ||
+        interaction.channelId ||
+        "";
+      
       // Always ensure we store the DM message info (this is the buttons message)
-      if (!session) {
-        setPendingLabelSession({
-          buyerDiscordId,
-          recordId,
-          tracking: "",
-          messageId: interaction.message?.id || "",
-          channelId: interaction.channelId || ""
-        });
-      } else {
-        // refresh message info in case it changed
-        setPendingLabelSession({
-          buyerDiscordId,
-          recordId,
-          tracking: session.tracking || "",
-          messageId: session.messageId || interaction.message?.id || "",
-          channelId: session.channelId || interaction.channelId || ""
-        });
-      }
+      setPendingLabelSession({
+        buyerDiscordId,
+        recordId,
+        tracking: session?.tracking || "",
+        messageId: resolvedMessageId,
+        channelId: resolvedChannelId
+      });
+
 
 
       const modal = new ModalBuilder().setCustomId(`${MODAL_UPLOAD_LABEL}:${recordId}`).setTitle("Upload UPS Label");
@@ -1318,37 +1323,44 @@ export function registerMemberWtbClaimFlow(client) {
           [FIELD_PAYMENT_PROOF]: [{ url: att.url, filename: att.name || "payment-proof" }]
         });
       
-        // Enable Upload Label button by editing the original DM message (if we can fetch it)
+        // Enable Upload Label button by editing the original DM message (fetch by stored channelId)
         try {
           const dmMsgId = activePay.messageId;
-          if (dmMsgId) {
-            const dmMsg = await message.channel.messages.fetch(dmMsgId).catch(() => null);
-            if (dmMsg) {
-              const recordId = activePay.recordId;
-      
-              const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
-                  .setLabel("Upload Payment Proof")
-                  .setStyle(ButtonStyle.Primary)
-                  .setDisabled(true),
-                new ButtonBuilder()
-                  .setCustomId(`${BTN_UPLOAD_LABEL}:${recordId}`)
-                  .setLabel("Upload Label")
-                  .setStyle(ButtonStyle.Success)
-                  .setDisabled(false)
-              );
-      
-              await dmMsg.edit({ components: [row] });
+          const dmChannelId = activePay.channelId;
+        
+          if (dmMsgId && dmChannelId) {
+            const dmChannel = await client.channels.fetch(dmChannelId).catch(() => null);
+            if (dmChannel?.isTextBased()) {
+              const dmMsg = await dmChannel.messages.fetch(dmMsgId).catch(() => null);
+              if (dmMsg) {
+                const recordId = activePay.recordId;
+        
+                const row = new ActionRowBuilder().addComponents(
+                  new ButtonBuilder()
+                    .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
+                    .setLabel("Upload Payment Proof")
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(true),
+                  new ButtonBuilder()
+                    .setCustomId(`${BTN_UPLOAD_LABEL}:${recordId}`)
+                    .setLabel("Upload Label")
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(false)
+                );
+        
+                await dmMsg.edit({ components: [row] });
+              }
             }
           }
         } catch (e) {
           console.warn("Failed enabling label button:", e?.message || e);
         }
+
       
         clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
-        buyerDmMsgMap.delete(dmKey(buyerDiscordId, activePay.recordId));
+        // ✅ DO NOT delete buyerDmMsgMap here — we still need it for the label step
         const jumpRow = dmJumpRow(activePay.channelId || message.channel.id, activePay.messageId);
+
 
         await message.channel.send({
           content: "✅ Payment proof received. You can now click **Upload Label**.",
@@ -1494,6 +1506,9 @@ export function registerMemberWtbClaimFlow(client) {
 
 
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
+        // ✅ Now we can forget the DM buttons message for this order (flow finished)
+        buyerDmMsgMap.delete(dmKey(buyerDiscordId, pending.recordId));
+
 
         await message.channel.send(`✅ Label saved.\n• Tracking: **${pending.tracking}**`);
 
