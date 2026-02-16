@@ -144,7 +144,7 @@ export function registerMemberWtbQuickDealCreate(app, client) {
 
       await base(CONFIG.wtbTable).update(recordId, {
         "Claim Message ID": msg.id,
-        "Claim Message URL": messageUrl
+        "Claim Message URL": messageUrl,
         "Claim Message Channel ID": channel.id
       });
 
