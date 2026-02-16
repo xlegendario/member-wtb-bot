@@ -1,36 +1,36 @@
 // src/features/wtb/memberWtbGuideMessage.js
-// Discord.js v14
+// Discord.js v14 (ESM)
 //
 // Purpose:
-// - Ensure the "Member WTBs – Buyer Guide" embed exists in your Guide channel.
+// - Ensure the "Member WTBs – Buyer Guide" message exists in your Guide channel.
 // - If it already exists (same identifier), edit it.
 // - If not, post it.
-// - Optional: persist the messageId to Airtable/DB yourself; this file supports env var too.
-//
-// Usage (recommended):
-//   import { ensureMemberWtbGuideMessage } from "./src/features/wtb/memberWtbGuideMessage.js";
-//   client.once(Events.ClientReady, async () => {
-//     await ensureMemberWtbGuideMessage(client);
-//   });
+// - Uses MULTIPLE embeds to avoid Discord's 4096-char embed description limit.
 //
 // ENV:
 //   GUIDE_CHANNEL_ID=123...
 //   GUIDE_MESSAGE_ID= (optional) message id to always edit the same message
 //
-// Notes:
-// - If GUIDE_MESSAGE_ID is not set, we try to find the message by embed footer identifier.
-// - If not found, we send a new message.
+// Usage:
+//   import { registerMemberWtbGuideMessage } from "./memberWtbGuideMessage.js";
+//   registerMemberWtbGuideMessage(client);
 
 import { EmbedBuilder, Events } from "discord.js";
 
 const GUIDE_CHANNEL_ID = process.env.GUIDE_CHANNEL_ID;
 const GUIDE_MESSAGE_ID = process.env.GUIDE_MESSAGE_ID || null;
 
-// This is how we "tag" the embed so we can find it later even if title/description changes.
-const GUIDE_EMBED_IDENTIFIER = "Kickz Caviar";
+// Embed identifier used to find/update the right message later.
+const GUIDE_EMBED_IDENTIFIER = "kc:member-wtb-buyer-guide:v1";
 
-function buildMemberWtbGuideEmbed() {
-  return new EmbedBuilder()
+/**
+ * Build multiple embeds (single message) so we don't exceed 4096 char limit.
+ * Discord limits:
+ * - Each embed description <= 4096 chars
+ * - Up to 10 embeds per message
+ */
+function buildMemberWtbGuideEmbeds() {
+  const embed1 = new EmbedBuilder()
     .setTitle("📦 Member WTBs – Buyer Guide")
     .setDescription(
       [
@@ -49,7 +49,6 @@ function buildMemberWtbGuideEmbed() {
         "• There you will find **two ways** to post WTB's",
         "",
         "**✅ Option A — Single WTB**",
-        "",
         "Use the **WTB post button / form** and fill in:",
         "• SKU",
         "• Size",
@@ -59,7 +58,6 @@ function buildMemberWtbGuideEmbed() {
         "Once submitted, your WTB becomes visible to sellers immediately.",
         "",
         "**✅ Option B — CSV Upload (Multiple WTBs)**",
-        "",
         "If you want to post **multiple WTBs at once**:",
         "1) Download the **CSV template**",
         "2) Fill it in (**1 row = 1 WTB**)",
@@ -68,8 +66,16 @@ function buildMemberWtbGuideEmbed() {
         "⚠️ **Important:** Only use the official template. Changing columns or formats may cause the upload to fail.",
         "",
         "Your WTB price will gradually increase over time (**12 hours**) from **Minimum Price** to **Maximum Price**, similar to our **Quick Deals** system.",
-        "",
-        "",
+      ].join("\n")
+    )
+    // Put the identifier only on the FIRST embed footer so we can reliably find it later.
+    .setFooter({ text: GUIDE_EMBED_IDENTIFIER })
+    .setTimestamp();
+
+  const embed2 = new EmbedBuilder()
+    .setTitle("📌 Duration, Pricing & Cancels")
+    .setDescription(
+      [
         "⏱️ **WTB Duration & Pricing Rules**",
         "",
         "• Member WTBs are **active for 24 hours only**",
@@ -114,8 +120,13 @@ function buildMemberWtbGuideEmbed() {
         "",
         "👉 Use the **Cancel WTB** option in <#1421660116846907513> **before a seller is matched**.",
         "You will receive a DM to choose which active WTBs you wish to cancel.",
-        "",
-        "---",
+      ].join("\n")
+    );
+
+  const embed3 = new EmbedBuilder()
+    .setTitle("💰 Payment, Label & Escrow")
+    .setDescription(
+      [
         "## 3️⃣ What Happens When a Seller Matches Your WTB",
         "",
         "Once a seller claims your WTB:",
@@ -124,6 +135,8 @@ function buildMemberWtbGuideEmbed() {
         "• Staff reviews and confirms the deal",
         "",
         "After admin confirmation, **you will receive a DM from the bot** to continue the flow.",
+        "",
+        "⚠️ All sellers must ship within 24-48 hours after they receive the shipping label. Monitored by **Kickz Caviar**",
         "",
         "---",
         "## 4️⃣ Payment & Shipping Flow (IMPORTANT)",
@@ -136,7 +149,6 @@ function buildMemberWtbGuideEmbed() {
         "⚠️ You do **NOT** pay the seller directly — your money is safe.",
         "",
         "**🚚 Shipping (UPS ONLY – for now)**",
-        "",
         "After payment proof is accepted:",
         "1) Provide a **UPS tracking number**",
         "2) Upload a **UPS shipping label** by dropping the file in DM",
@@ -165,15 +177,15 @@ function buildMemberWtbGuideEmbed() {
         "",
         "If anything is unclear or you run into issues, **contact staff immediately**.",
       ].join("\n")
-    )
-    .setFooter({ text: GUIDE_EMBED_IDENTIFIER })
-    .setTimestamp();
+    );
+
+  return [embed1, embed2, embed3];
 }
 
 /**
  * Finds an existing guide message:
- * - If GUIDE_MESSAGE_ID exists: fetch it
- * - else: searches recent messages for our embed footer identifier + authored by this bot
+ * - If GUIDE_MESSAGE_ID exists: fetch it directly
+ * - else: searches recent messages for our embed footer identifier (authored by the bot)
  */
 async function findExistingGuideMessage(channel, client) {
   // 1) If message id is known, fetch directly
@@ -195,8 +207,8 @@ async function findExistingGuideMessage(channel, client) {
       if (botId && msg.author?.id !== botId) continue;
       if (!msg.embeds?.length) continue;
 
-      const match = msg.embeds.some((e) => e?.footer?.text === GUIDE_EMBED_IDENTIFIER);
-      if (match) return msg;
+      const hasIdentifier = msg.embeds.some((e) => e?.footer?.text === GUIDE_EMBED_IDENTIFIER);
+      if (hasIdentifier) return msg;
     }
   } catch {
     // ignore
@@ -222,28 +234,35 @@ export async function ensureMemberWtbGuideMessage(client) {
     return null;
   }
 
-  const embed = buildMemberWtbGuideEmbed();
-  const existing = await findExistingGuideMessage(channel, client);
+  const embeds = buildMemberWtbGuideEmbeds();
 
+  const existing = await findExistingGuideMessage(channel, client);
   if (existing) {
-    await existing.edit({ embeds: [embed] }).catch(() => null);
-    console.log("[MemberWTB Guide] Updated existing guide message:", existing.id);
-    return existing;
+    try {
+      await existing.edit({ embeds });
+      console.log("[MemberWTB Guide] Updated existing guide message:", existing.id);
+      return existing;
+    } catch (e) {
+      console.error("[MemberWTB Guide] Failed to edit existing guide message:", e?.message || e);
+      return null;
+    }
   }
 
-  const sent = await channel.send({ embeds: [embed] }).catch(() => null);
-  if (sent) {
+  try {
+    const sent = await channel.send({ embeds });
     console.log("[MemberWTB Guide] Posted new guide message:", sent.id);
     console.log(
       "[MemberWTB Guide] Tip: set GUIDE_MESSAGE_ID env var to this id to always edit the same message."
     );
+    return sent;
+  } catch (e) {
+    console.error("[MemberWTB Guide] Failed to post new guide message:", e?.message || e);
+    return null;
   }
-  return sent;
 }
 
 /**
- * Optional helper to auto-run on ready if you want to register it like other features.
- * Call registerMemberWtbGuideMessage(client) somewhere in your bootstrap.
+ * Auto-run on ready (register like your other features)
  */
 export function registerMemberWtbGuideMessage(client) {
   client.once(Events.ClientReady, async () => {
