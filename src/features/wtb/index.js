@@ -7,6 +7,7 @@ import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js";
 import { registerMemberWtbQuickDealUpdate } from "./quickDealUpdate.js";
 import { registerCancelWtbs } from "./cancelWtbs.js"; // ✅ NEW
 import { registerMemberWtbGuideMessage } from "./memberWtbGuideMessage.js"; // ✅ FIX
+import { registerMemberWtbExpirySweep } from "./expireWtbs.js";
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
@@ -18,6 +19,7 @@ export function registerWtbFeature(client, app) {
   registerCsvDropHandler(client);
   registerCancelWtbs(client); // ✅ NEW
   registerMemberWtbGuideMessage(client);
+  registerMemberWtbExpirySweep(client);
 
   if (app) {
     registerMemberWtbQuickDealCreate(app, client);
