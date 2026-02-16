@@ -27,7 +27,7 @@ const GUIDE_CHANNEL_ID = process.env.GUIDE_CHANNEL_ID;
 const GUIDE_MESSAGE_ID = process.env.GUIDE_MESSAGE_ID || null;
 
 // This is how we "tag" the embed so we can find it later even if title/description changes.
-const GUIDE_EMBED_IDENTIFIER = "kc:member-wtb-buyer-guide:v1";
+const GUIDE_EMBED_IDENTIFIER = "Kickz Caviar";
 
 function buildMemberWtbGuideEmbed() {
   return new EmbedBuilder()
