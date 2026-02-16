@@ -53,9 +53,6 @@ const FIELD_PAYMENT_PROOF = "Payment Proof"; // Airtable attachment field (add t
 const FIELD_CURRENT_PAYOUT_MARGIN = "Current Payout";
 const FIELD_CURRENT_PAYOUT_VAT0 = "Current Payout VAT0";
 
-// locked payout fields (written on claim)
-const FIELD_LOCKED_PAYOUT_VAT0 = "Locked Payout VAT0";
-
 // Buyer payment fields
 const FIELD_BUYER_DISCORD_ID = "Buyer Discord ID";
 const FIELD_BUYER_COUNTRY = "Buyer Country";
@@ -305,7 +302,7 @@ function dmJumpRow(dmChannelId, dmMessageId) {
     new ButtonBuilder()
       .setStyle(ButtonStyle.Link)
       .setURL(url)
-      .setLabel("Open buttons message")
+      .setLabel("Go to embed")
   );
 }
 
@@ -638,7 +635,6 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_SELLER_DISCORD_ID]: interaction.user.id,
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: vatType,
         [FIELD_LOCKED_PAYOUT]: lockedPayout,
-        [FIELD_LOCKED_PAYOUT_VAT0]: vat0Payout,
         [FIELD_CLAIMED_SELLER_CONFIRMED]: false
       });
 
@@ -839,9 +835,11 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_CLAIMED_SELLER_VAT_TYPE]: null,
         [FIELD_CLAIMED_SELLER]: [],
         [FIELD_LOCKED_PAYOUT]: null,
-        [FIELD_LOCKED_PAYOUT_VAT0]: null,
         [FIELD_BUYER_PAYMENT_REQUESTED_AT]: null,
-        [FIELD_CLAIMED_SELLER_CONFIRMED]: false
+        [FIELD_CLAIMED_SELLER_CONFIRMED]: false,
+        [FIELD_TRACKING_NUMBER]: "",
+        [FIELD_SHIPPING_LABEL]: "",
+        [FIELD_PAYMENT_PROOF]: ""
       });
 
       await safeReplyEphemeral(interaction, "✅ Cancelled. Channel will be deleted.");
