@@ -13,20 +13,16 @@ import { CONFIG } from "../../config.js";
 
 const WTB_TABLE = CONFIG.wtbTable || "Member WTBs";
 
-// ---- Airtable field names (change if yours differ) ----
+// ---- Airtable field names ----
 const FIELD_STATUS = "Fulfillment Status";
 const FIELD_CREATED_TIME = "Created Time"; // Airtable "Created time" field (must exist)
 const FIELD_CLAIMED_CHANNEL_ID = "Claimed Channel ID";
 const FIELD_CLAIM_MESSAGE_ID = "Claim Message ID";
-const FIELD_WTB_CHANNEL_ID = "WTB Channel ID"; // optional (if you store it)
+const FIELD_CLAIM_MESSAGE_CHANNEL_ID = "Claim Message Channel ID";
 
 // ---- Settings ----
 const EXPIRY_HOURS = Number(process.env.MEMBER_WTB_EXPIRY_HOURS || 24);
 const INTERVAL_MINUTES = Number(process.env.MEMBER_WTB_EXPIRY_SWEEP_MINUTES || 10);
-
-// Where listing messages are posted (fallback if FIELD_WTB_CHANNEL_ID is not stored)
-const DEFAULT_WTB_LISTINGS_CHANNEL_ID =
-  process.env.MEMBER_WTB_LISTINGS_CHANNEL_ID || process.env.DISCORD_MEMBER_WTB_CHANNEL_ID || null;
 
 // Status value to set when expiring
 const EXPIRED_STATUS_VALUE = "Expired";
@@ -52,7 +48,6 @@ function disableComponents(components = []) {
 }
 
 export async function sweepExpiredMemberWtbs(client) {
-  // Filter ONLY: Pending / Outsource, no claimed channel, older than expiry hours
   const formula = `AND(
     OR(
       {${FIELD_STATUS}} = "Pending",
@@ -81,7 +76,6 @@ export async function sweepExpiredMemberWtbs(client) {
     const recordId = rec.id;
 
     try {
-      // Extra safety: if Created Time is missing, skip to avoid false expiry
       const createdAt = parseAirtableDate(rec.get(FIELD_CREATED_TIME));
       if (!createdAt) {
         console.warn(`[WTB Expiry] Missing/invalid Created Time for record=${recordId}, skipping.`);
@@ -89,8 +83,7 @@ export async function sweepExpiredMemberWtbs(client) {
       }
 
       const messageId = s(rec.get(FIELD_CLAIM_MESSAGE_ID)).trim();
-      const channelId =
-        s(rec.get(FIELD_WTB_CHANNEL_ID)).trim() || s(DEFAULT_WTB_LISTINGS_CHANNEL_ID).trim();
+      const channelId = s(rec.get(FIELD_CLAIM_MESSAGE_CHANNEL_ID)).trim();
 
       // 1) Update Airtable status -> Expired
       await base(WTB_TABLE).update([
@@ -102,7 +95,7 @@ export async function sweepExpiredMemberWtbs(client) {
         },
       ]);
 
-      // 2) If we can't edit the message, we're still fine (Airtable is correct)
+      // 2) If we can't edit the message, Airtable is still correct
       if (!messageId || !channelId) {
         console.warn(
           `[WTB Expiry] Expired Airtable but cannot edit Discord (missing messageId/channelId). record=${recordId}`
@@ -124,7 +117,6 @@ export async function sweepExpiredMemberWtbs(client) {
 
       const newComponents = disableComponents(msg.components);
 
-      // Optional: prefix embed title with EXPIRED
       const embeds = msg.embeds?.map((e) => {
         const data = e.toJSON();
         if (data?.title && !data.title.includes("EXPIRED")) {
@@ -151,10 +143,7 @@ export function registerMemberWtbExpirySweep(client) {
       `[WTB Expiry] Enabled: every ${INTERVAL_MINUTES} min | expiry=${EXPIRY_HOURS}h | statuses: Pending/Outsource -> Expired`
     );
 
-    // Run shortly after startup
     setTimeout(() => sweepExpiredMemberWtbs(client), 15_000);
-
-    // Then keep running
     setInterval(() => sweepExpiredMemberWtbs(client), INTERVAL_MINUTES * 60 * 1000);
   });
 }
