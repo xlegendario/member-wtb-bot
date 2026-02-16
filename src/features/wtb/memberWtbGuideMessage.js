@@ -22,7 +22,7 @@ const GUIDE_MESSAGE_ID = process.env.GUIDE_MESSAGE_ID || null;
 const KC_EMBED_COLOR = 0xFFD400; // Kickz Caviar yellow
 
 // Embed identifier used to find/update the right message later.
-const GUIDE_EMBED_IDENTIFIER = "kc:member-wtb-buyer-guide:v1";
+const GUIDE_EMBED_IDENTIFIER = "Kickz Caviar - All rights reserved";
 
 /**
  * Build multiple embeds (single message) so we don't exceed 4096 char limit.
