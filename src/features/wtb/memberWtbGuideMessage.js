@@ -40,6 +40,8 @@ function buildMemberWtbGuideEmbeds() {
         "",
         "Get your WTB's shared across our entire network of Members, Consignors, and Suppliers to source your item with the **least effort** and at the **best possible price**. Always shipped fast and clean boxed.",
         "",
+        "No negotiations, no untrusted sellers, no highballers. Just post your WTB and we handle the rest.",
+        "",
         "This guide explains **how to post a Want To Buy (WTB)**, how the process works once a seller is matched, and how **payment & escrow** are handled.",
         "",
         "Please read this carefully before posting.",
