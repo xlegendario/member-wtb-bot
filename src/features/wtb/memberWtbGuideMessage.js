@@ -19,6 +19,7 @@ import { EmbedBuilder, Events } from "discord.js";
 
 const GUIDE_CHANNEL_ID = process.env.GUIDE_CHANNEL_ID;
 const GUIDE_MESSAGE_ID = process.env.GUIDE_MESSAGE_ID || null;
+const KC_EMBED_COLOR = 0xFFD400; // Kickz Caviar yellow
 
 // Embed identifier used to find/update the right message later.
 const GUIDE_EMBED_IDENTIFIER = "kc:member-wtb-buyer-guide:v1";
@@ -31,6 +32,7 @@ const GUIDE_EMBED_IDENTIFIER = "kc:member-wtb-buyer-guide:v1";
  */
 function buildMemberWtbGuideEmbeds() {
   const embed1 = new EmbedBuilder()
+    .setColor(KC_EMBED_COLOR)
     .setTitle("📦 Member WTBs – Buyer Guide")
     .setDescription(
       [
@@ -73,6 +75,7 @@ function buildMemberWtbGuideEmbeds() {
     .setTimestamp();
 
   const embed2 = new EmbedBuilder()
+    .setColor(KC_EMBED_COLOR)
     .setTitle("📌 Duration, Pricing & Cancels")
     .setDescription(
       [
@@ -124,6 +127,7 @@ function buildMemberWtbGuideEmbeds() {
     );
 
   const embed3 = new EmbedBuilder()
+    .setColor(KC_EMBED_COLOR)
     .setTitle("💰 Payment, Label & Escrow")
     .setDescription(
       [
