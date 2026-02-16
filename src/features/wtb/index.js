@@ -6,7 +6,7 @@ import { registerMemberWtbQuickDealCreate } from "./quickDealCreate.js";
 import { registerMemberWtbClaimFlow } from "./memberWtbClaimFlow.js";
 import { registerMemberWtbQuickDealUpdate } from "./quickDealUpdate.js";
 import { registerCancelWtbs } from "./cancelWtbs.js"; // ✅ NEW
-import { registerMemberWtbGuideMessage } from "./src/features/wtb/memberWtbGuideMessage.js";
+import { registerMemberWtbGuideMessage } from "./memberWtbGuideMessage.js"; // ✅ FIX
 
 export function registerWtbFeature(client, app) {
   client.once(Events.ClientReady, async () => {
