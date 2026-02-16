@@ -83,11 +83,11 @@ export function registerMemberWtbQuickDealUpdate(app, client) {
 
       // Keep your clean format like your main quick deals
       const curLine =
-        `${cp != null ? `€${cp} (Margin/VAT21)` : `- (Margin/VAT21)`} / ` +
+        `${cp != null ? `€${cp} (Margin)` : `- (Margin)`} / ` +
         `${cp0 != null ? `€${cp0} (VAT0)` : `- (VAT0)`}`;
 
       const maxLine =
-        `${mp != null ? `€${mp} (Margin/VAT21)` : `- (Margin/VAT21)`} / ` +
+        `${mp != null ? `€${mp} (Margin)` : `- (Margin)`} / ` +
         `${mp0 != null ? `€${mp0} (VAT0)` : `- (VAT0)`}`;
 
       const fields = [
