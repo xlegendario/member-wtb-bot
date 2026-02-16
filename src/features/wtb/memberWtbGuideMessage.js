@@ -34,6 +34,10 @@ function buildMemberWtbGuideEmbed() {
     .setTitle("📦 Member WTBs – Buyer Guide")
     .setDescription(
       [
+        "Welcome to Member WTB's!",
+        "",
+        "Get your WTB's reach our entire network of Members, Consignors and Suppliers to get your item for the best possible price with the least effort. Always shipped fast and clean boxed.",
+        "",
         "This guide explains **how to post a Want To Buy (WTB)**, how the process works once a seller is matched, and how **payment & escrow** are handled.",
         "",
         "Please read this before posting.",
