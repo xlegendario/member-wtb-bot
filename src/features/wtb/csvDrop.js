@@ -17,22 +17,12 @@ function normalizeCsvRow(row) {
 
   if (!sku) return { ok: false, reason: "Missing SKU" };
   if (!size) return { ok: false, reason: "Missing Size" };
-  
-  if (minPrice === null) {
-    return { ok: false, reason: "Missing or invalid Min Price" };
-  }
-  if (maxPrice === null) {
-    return { ok: false, reason: "Missing or invalid Max Price" };
-  }
-  
-  if (minPrice <= 0 || maxPrice <= 0) {
-    return { ok: false, reason: "Min/Max Price must be > 0" };
-  }
-  
-  if (minPrice > maxPrice) {
-    return { ok: false, reason: "Min Price > Max Price" };
-  }
 
+  if (minPrice === null) return { ok: false, reason: "Missing or invalid Min Price" };
+  if (maxPrice === null) return { ok: false, reason: "Missing or invalid Max Price" };
+
+  if (minPrice <= 0 || maxPrice <= 0) return { ok: false, reason: "Min/Max Price must be > 0" };
+  if (minPrice > maxPrice) return { ok: false, reason: "Min Price > Max Price" };
 
   return { ok: true, data: { sku, size, minPrice, maxPrice } };
 }
@@ -42,9 +32,7 @@ async function safeDelete(msg) {
 }
 
 async function safeDM(user, content) {
-  try { await user.send(content); } catch {
-    // User has DMs closed. Nothing we can do except maybe log.
-  }
+  try { await user.send(content); } catch {}
 }
 
 export function registerCsvDropHandler(client) {
@@ -57,14 +45,14 @@ export function registerCsvDropHandler(client) {
 
     if (!attachment) return;
 
-    // Optional: bot status message, auto-deleted
-    const statusMsg = await message.channel.send(`⏳ Processing CSV for <@${message.author.id}>...`).catch(() => null);
+    const statusMsg = await message.channel
+      .send(`⏳ Processing CSV for <@${message.author.id}>...`)
+      .catch(() => null);
 
     try {
       // Lookup seller
       const sellerRecordId = await findSellerRecordIdByDiscordId(message.author.id);
       if (!sellerRecordId) {
-        // Delete the CSV message so it isn't visible
         await safeDelete(message);
         if (statusMsg) await safeDelete(statusMsg);
 
@@ -75,7 +63,7 @@ export function registerCsvDropHandler(client) {
         return;
       }
 
-      // Download CSV (before deletion)
+      // Download CSV
       const res = await fetch(attachment.url);
       if (!res.ok) {
         await safeDelete(message);
@@ -103,38 +91,55 @@ export function registerCsvDropHandler(client) {
       for (let i = 0; i < rows.length; i++) {
         const nr = normalizeCsvRow(rows[i]);
         if (nr.ok) accepted.push(nr.data);
-        else rejected.push(`Row ${i + 2}: ${nr.reason}`);
+        else rejected.push(`Row ${i + 2}: ${nr.reason}`); // +2 = header row + 1-index
       }
 
-      // Create records
       if (!accepted.length) {
+        await safeDelete(message);
+        if (statusMsg) await safeDelete(statusMsg);
+
         await safeDM(
           message.author,
-          "❌ No valid rows found in your CSV. Make sure **Min Price** and **Max Price** are filled."
+          "❌ No valid rows found in your CSV. Make sure **SKU**, **Size**, **Min Price**, **Max Price** are filled."
         );
         return;
       }
 
+      // ✅ CREATE Airtable records (this was missing)
+      // createWtbBatch should return either:
+      // - number created, OR
+      // - array of created records
+      const result = await createWtbBatch({
+        sellerRecordId,
+        items: accepted
+      });
 
-      // Always delete CSV message after processing
+      const created =
+        typeof result === "number"
+          ? result
+          : Array.isArray(result)
+            ? result.length
+            : accepted.length; // safe fallback
+
+      // Clean up channel
       await safeDelete(message);
       if (statusMsg) await safeDelete(statusMsg);
 
-      // DM summary (private)
+      // DM summary
       const lines = [
         "✅ **CSV import complete**",
         `• Created: **${created}**`,
         `• Rejected: **${rejected.length}**`
       ];
       if (rejected.length) lines.push("```" + rejected.slice(0, 15).join("\n") + "```");
+      if (rejected.length > 15) lines.push(`(and ${rejected.length - 15} more...)`);
 
       await safeDM(message.author, lines.join("\n"));
     } catch (e) {
-      // Ensure the channel stays clean even on crash
       await safeDelete(message);
       if (statusMsg) await safeDelete(statusMsg);
 
-      await safeDM(message.author, `❌ Import failed: ${e.message}`);
+      await safeDM(message.author, `❌ Import failed: ${e?.message || String(e)}`);
     }
   });
 }
