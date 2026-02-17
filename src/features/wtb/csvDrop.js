@@ -111,7 +111,7 @@ export function registerCsvDropHandler(client) {
       // - array of created records
       const result = await createWtbBatch({
         sellerRecordId,
-        items: accepted
+        rows: accepted
       });
 
       const created =
