@@ -10,7 +10,7 @@
 //   partials: [Partials.Channel, Partials.Message, Partials.User],
 // });
 //
-// Also: Developer Portal -> Message Content Intent = ON (you already did)
+// Also: Developer Portal -> Message Content Intent = ON
 
 let __memberWtbClaimFlowRegistered = false;
 
@@ -47,9 +47,9 @@ const FIELD_CLAIMED_SELLER_VAT_TYPE = "Claimed Seller VAT Type";
 const FIELD_LOCKED_PAYOUT = "Locked Payout";
 const FIELD_CLAIMED_SELLER_CONFIRMED = "Claimed Seller Confirmed?";
 const FIELD_PICTURE = "Picture";
-const FIELD_PAYMENT_PROOF = "Payment Proof"; // Airtable attachment field (add this in Member WTBs)
+const FIELD_PAYMENT_PROOF = "Payment Proof";
 
-// payouts (live/current payout fields on Member WTBs)
+// payouts
 const FIELD_CURRENT_PAYOUT_MARGIN = "Current Payout";
 const FIELD_CURRENT_PAYOUT_VAT0 = "Current Payout VAT0";
 
@@ -65,15 +65,13 @@ const FIELD_BUYER_PAYMENT_REQUESTED_AT = "Buyer Payment Requested At";
 
 // Shipping label fields
 const FIELD_TRACKING_NUMBER = "Tracking Number";
-const FIELD_SHIPPING_LABEL = "Shipping Label"; // Airtable attachment field
+const FIELD_SHIPPING_LABEL = "Shipping Label";
 
 /* ---------------- Discord interaction IDs ---------------- */
 
-// DM button + modal
 const BTN_UPLOAD_LABEL = "member_wtb_buyer_upload_label";
 const MODAL_UPLOAD_LABEL = "member_wtb_buyer_upload_label_modal";
 const BTN_UPLOAD_PAYMENT_PROOF = "member_wtb_buyer_upload_payment_proof";
-
 
 /* ---------------- ENV config ---------------- */
 
@@ -89,7 +87,6 @@ const ADMIN_ROLE_IDS = (process.env.ADMIN_ROLE_IDS || "")
 
 const MAKE_MEMBER_WTB_WEBHOOK_URL = process.env.MAKE_MEMBER_WTB_WEBHOOK_URL || "";
 console.log("[ENV] MAKE_MEMBER_WTB_WEBHOOK_URL:", MAKE_MEMBER_WTB_WEBHOOK_URL ? "SET" : "MISSING");
-
 
 async function fireMakeWebhook(eventType, payload) {
   if (!MAKE_MEMBER_WTB_WEBHOOK_URL) {
@@ -117,7 +114,6 @@ async function fireMakeWebhook(eventType, payload) {
   }
 }
 
-
 /* ---------------- Helpers ---------------- */
 
 function toChannelSlug(s) {
@@ -129,8 +125,6 @@ function toChannelSlug(s) {
     .replace(/^-|-$/g, "")
     .slice(0, 95);
 }
-
-
 
 async function pickCategoryWithSpace(guild, categoryIds) {
   if (!categoryIds.length) return null;
@@ -191,7 +185,7 @@ function getLinkedRecordId(v) {
     if (!first) return "";
     if (typeof first === "string") return first.trim();
     if (typeof first === "object" && first.id) return String(first.id).trim();
-    return ""; // lookup style - no id
+    return "";
   }
 
   if (typeof v === "object" && v.id) return String(v.id).trim();
@@ -212,16 +206,12 @@ function computeBuyerCharge({ sellerVatType, buyerCountry, buyerVatId, buyerPric
   const country = String(buyerCountry || "").trim().toUpperCase();
   const vatId = String(buyerVatId || "").trim();
 
-  // Margin is ALWAYS margin invoicing -> never VAT0 buyer pricing
   if (sv === "MARGIN") return buyerPrice;
 
   const isCompany = !!vatId;
   const isNonNL = !!country && country !== "NL";
 
-  // Only B2B outside NL gets VAT0 price (reverse charge)
   if (isCompany && isNonNL) return buyerPriceVat0 ?? buyerPrice;
-
-  // Everyone else pays normal
   return buyerPrice;
 }
 
@@ -234,39 +224,50 @@ async function safeSendDM(client, discordUserId, payload) {
     const u = await client.users.fetch(discordUserId);
     if (!u) return null;
     const msg = await u.send(payload);
-    return msg; // ✅ return message object
+    return msg;
   } catch (e) {
     console.warn("DM failed:", e?.message || e);
     return null;
   }
 }
 
-async function safeDeferEphemeral(interaction) {
+/**
+ * ✅ FIXED: DM-safe defer helper.
+ * - Ephemeral only works in guilds
+ * - Always ACK quickly to avoid "This interaction failed"
+ */
+async function safeDefer(interaction, { ephemeral = true } = {}) {
   try {
-    // ✅ ephemeral via flags (avoids the deprecation warning)
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (ephemeral && interaction.inGuild()) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } else {
+      await interaction.deferReply();
+    }
     return true;
   } catch (e) {
-    // 10062 = Unknown interaction (expired / already acknowledged)
     if (e?.code === 10062) {
       console.warn("deferReply failed: Unknown interaction (10062) - ignoring");
       return false;
     }
-    console.error("deferReply failed:", e);
+    console.error("safeDefer failed:", e);
     return false;
   }
 }
 
-
-
-async function safeReplyEphemeral(interaction, payload) {
+/**
+ * ✅ FIXED: DM-safe reply helper.
+ * - Only applies ephemeral flags in guilds
+ */
+async function safeReply(interaction, payload, { ephemeral = true } = {}) {
   try {
-    const data = typeof payload === "string"
-      ? { content: payload }
-      : (payload || {});
+    const data = typeof payload === "string" ? { content: payload } : (payload || {});
 
-    // Force ephemeral by flags (safe)
-    if (!data.flags) data.flags = MessageFlags.Ephemeral;
+    if (ephemeral && interaction.inGuild()) {
+      if (!data.flags) data.flags = MessageFlags.Ephemeral;
+    } else {
+      delete data.flags;
+      delete data.ephemeral;
+    }
 
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(data);
@@ -275,11 +276,10 @@ async function safeReplyEphemeral(interaction, payload) {
     }
   } catch (e) {
     if (e?.code === 10062) return;
-    if (e?.code === 40060) return; // already acked somewhere else
-    console.error("safeReplyEphemeral failed:", e);
+    if (e?.code === 40060) return;
+    console.error("safeReply failed:", e);
   }
 }
-
 
 async function safeEditMessage(msg, patch) {
   try {
@@ -299,14 +299,9 @@ function dmJumpRow(dmChannelId, dmMessageId) {
   if (!url) return null;
 
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setStyle(ButtonStyle.Link)
-      .setURL(url)
-      .setLabel("Go to embed")
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(url).setLabel("Go to embed")
   );
 }
-
-
 
 async function buildMakePayload({ recordId, client }) {
   const rec = await base(WTB_TABLE).find(recordId);
@@ -324,7 +319,6 @@ async function buildMakePayload({ recordId, client }) {
 
   const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
 
-  // seller info from Airtable fields you already write on claim:
   const sellerDiscordId = String(rec.get(FIELD_CLAIMED_SELLER_DISCORD_ID) || "").trim();
   const vatType = String(rec.get(FIELD_CLAIMED_SELLER_VAT_TYPE) || "").trim();
   const payout = Number(rec.get(FIELD_LOCKED_PAYOUT) || 0);
@@ -348,12 +342,11 @@ async function buildMakePayload({ recordId, client }) {
     recordId,
     dealChannelId,
     sellerDiscordId,
-    sellerRecordId, // ✅ ADD THIS BACK
+    sellerRecordId,
     lockedPayout: payout,
     claimMessageUrl
   };
 }
-
 
 /* ---------------- Main registration ---------------- */
 
@@ -365,22 +358,20 @@ export function registerMemberWtbClaimFlow(client) {
   const sellerMap = new Map(); // channelId -> claim context
   const uploadedImagesMap = new Map(); // channelId -> [urls]
 
-  // ✅ Store DM "buttons message" per buyer+record (so we can jump/edit later)
+  // Store DM "buttons message" per buyer+record (RAM only; clears on restart)
   const buyerDmMsgMap = new Map(); // key -> { messageId, channelId }
   const dmKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
 
-
-
   // buyer label sessions
-  const pendingBuyerLabelMap = new Map(); // key: buyerId:recordId -> session
-  const PENDING_LABEL_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const pendingBuyerLabelMap = new Map();
+  const PENDING_LABEL_TTL_MS = 5 * 60 * 1000;
   const pendingKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
 
-  // buyer payment proof sessions (strict 5 min, per buyer+record)
-  const pendingBuyerPaymentMap = new Map(); // key: buyerId:recordId -> session
-  const PENDING_PAYMENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  // buyer payment proof sessions
+  const pendingBuyerPaymentMap = new Map();
+  const PENDING_PAYMENT_TTL_MS = 5 * 60 * 1000;
   const payKey = (buyerDiscordId, recordId) => `${buyerDiscordId}:${recordId}`;
-  
+
   function setPendingPaymentSession({ buyerDiscordId, recordId, messageId, channelId }) {
     const now = nowMs();
     pendingBuyerPaymentMap.set(payKey(buyerDiscordId, recordId), {
@@ -392,7 +383,7 @@ export function registerMemberWtbClaimFlow(client) {
       expiresAt: now + PENDING_PAYMENT_TTL_MS
     });
   }
-  
+
   function getPendingPaymentSession(buyerDiscordId, recordId) {
     const key = payKey(buyerDiscordId, recordId);
     const s = pendingBuyerPaymentMap.get(key);
@@ -403,14 +394,9 @@ export function registerMemberWtbClaimFlow(client) {
     }
     return s;
   }
-  
+
   function clearPendingPaymentSession(buyerDiscordId, recordId) {
     pendingBuyerPaymentMap.delete(payKey(buyerDiscordId, recordId));
-  }
-  
-  // Helper: block multiple active sessions for same order
-  function hasActiveAnySession(buyerDiscordId, recordId) {
-    return !!getPendingPaymentSession(buyerDiscordId, recordId) || !!getPendingLabelSession(buyerDiscordId, recordId);
   }
 
   function setPendingLabelSession({ buyerDiscordId, recordId, tracking, messageId, channelId }) {
@@ -441,12 +427,21 @@ export function registerMemberWtbClaimFlow(client) {
     pendingBuyerLabelMap.delete(pendingKey(buyerDiscordId, recordId));
   }
 
-  // ✅ Debug safety (prevents silent crashes)
+  // Debug safety
   client.on("error", (e) => console.error("[DISCORD CLIENT ERROR]", e));
   process.on("unhandledRejection", (e) => console.error("[UNHANDLED REJECTION]", e));
   process.on("uncaughtException", (e) => console.error("[UNCAUGHT EXCEPTION]", e));
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    // ✅ helpful debugging
+    console.log("[InteractionCreate]", {
+      isButton: interaction.isButton?.(),
+      isModal: interaction.isModalSubmit?.(),
+      customId: interaction.customId,
+      inGuild: interaction.inGuild?.(),
+      user: interaction.user?.id
+    });
+
     // 1) Listing claim button -> show modal
     if (interaction.isButton() && interaction.customId.startsWith("member_wtb_claim_")) {
       const recordId = interaction.customId.replace("member_wtb_claim_", "").trim();
@@ -483,20 +478,20 @@ export function registerMemberWtbClaimFlow(client) {
 
     // 2) Claim modal submit -> validate seller + lock payout + create deal channel
     if (interaction.isModalSubmit() && interaction.customId.startsWith("member_wtb_claim_modal_")) {
-      const ok = await safeDeferEphemeral(interaction);
+      const ok = await safeDefer(interaction, { ephemeral: true });
       if (!ok) return;
 
       const recordId = interaction.customId.replace("member_wtb_claim_modal_", "").trim();
 
       const sellerIdRaw = String(interaction.fields.getTextInputValue("seller_id") || "").replace(/\D/g, "");
       if (!sellerIdRaw) {
-        return safeReplyEphemeral(interaction, "❌ Please enter a valid Seller ID (e.g. 00001).");
+        return safeReply(interaction, "❌ Please enter a valid Seller ID (e.g. 00001).", { ephemeral: true });
       }
       const sellerId = `SE-${sellerIdRaw.padStart(5, "0")}`;
 
       const vatType = parseVatType(interaction.fields.getTextInputValue("vat_type"));
       if (!vatType) {
-        return safeReplyEphemeral(interaction, '❌ Invalid VAT Type. Use **Margin**, **VAT21** or **VAT0**.');
+        return safeReply(interaction, '❌ Invalid VAT Type. Use **Margin**, **VAT21** or **VAT0**.', { ephemeral: true });
       }
 
       let wtbRec;
@@ -504,14 +499,14 @@ export function registerMemberWtbClaimFlow(client) {
         wtbRec = await base(WTB_TABLE).find(recordId);
       } catch (e) {
         console.error("WTB find failed:", e);
-        return safeReplyEphemeral(interaction, "❌ Could not load the WTB record. Check recordId.");
+        return safeReply(interaction, "❌ Could not load the WTB record. Check recordId.", { ephemeral: true });
       }
 
       // idempotency
       const existingClaimedChannelId = String(wtbRec.get(FIELD_CLAIMED_CHANNEL_ID) || "").trim();
       const existingStatus = String(wtbRec.get(FIELD_FULFILLMENT_STATUS) || "").trim();
       if (existingClaimedChannelId && existingStatus === "Claim Processing") {
-        return safeReplyEphemeral(interaction, `⚠️ This deal is already being processed in <#${existingClaimedChannelId}>.`);
+        return safeReply(interaction, `⚠️ This deal is already being processed in <#${existingClaimedChannelId}>.`, { ephemeral: true });
       }
 
       const asText = (v) => firstText(v);
@@ -520,9 +515,8 @@ export function registerMemberWtbClaimFlow(client) {
       const size = asText(wtbRec.get("Size")).trim();
       const brand = asText(wtbRec.get("Brand")).trim();
 
-      // ✅ ADD THIS
       const orderId = String(wtbRec.get("Member WTB ID") || wtbRec.get("OrderId") || "").trim();
-      
+
       const productName =
         String(wtbRec.get("Product Name") || "").trim() ||
         [brand, sku].filter(Boolean).join(" ").trim();
@@ -531,16 +525,17 @@ export function registerMemberWtbClaimFlow(client) {
       const vat0Payout = toNumber(wtbRec.get(FIELD_CURRENT_PAYOUT_VAT0));
 
       if (marginPayout == null || vat0Payout == null) {
-        return safeReplyEphemeral(
+        return safeReply(
           interaction,
           `❌ Could not lock payout because current payout fields are missing/invalid.\n` +
-            `Check Airtable fields:\n- ${FIELD_CURRENT_PAYOUT_MARGIN}\n- ${FIELD_CURRENT_PAYOUT_VAT0}`
+            `Check Airtable fields:\n- ${FIELD_CURRENT_PAYOUT_MARGIN}\n- ${FIELD_CURRENT_PAYOUT_VAT0}`,
+          { ephemeral: true }
         );
       }
 
       const lockedPayout = vatType === "VAT0" ? vat0Payout : marginPayout;
       if (!Number.isFinite(lockedPayout)) {
-        return safeReplyEphemeral(interaction, "❌ Locked payout is not a valid number.");
+        return safeReply(interaction, "❌ Locked payout is not a valid number.", { ephemeral: true });
       }
 
       const sellerRecords = await base(SELLERS_TABLE)
@@ -548,14 +543,14 @@ export function registerMemberWtbClaimFlow(client) {
         .firstPage();
 
       if (!sellerRecords.length) {
-        return safeReplyEphemeral(interaction, `❌ Seller ID **${sellerId}** not found.`);
+        return safeReply(interaction, `❌ Seller ID **${sellerId}** not found.`, { ephemeral: true });
       }
 
       const guild = await client.guilds.fetch(CONFIG.guildId);
 
       const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
       if (!pickedCategory) {
-        return safeReplyEphemeral(interaction, "❌ All Member WTB categories are full (50 channels each). Add a new category.");
+        return safeReply(interaction, "❌ All Member WTB categories are full (50 channels each). Add a new category.", { ephemeral: true });
       }
 
       const channelName = toChannelSlug(orderId || `wtb-${sku}-${size}`);
@@ -662,16 +657,20 @@ export function registerMemberWtbClaimFlow(client) {
         }
       } catch (_) {}
 
-      return safeReplyEphemeral(
+      return safeReply(
         interaction,
-        `✅ Claimed! Your deal channel is <#${dealChannel.id}>.\nClick **Process Claim** there to verify your Seller ID and start photo upload.`
+        `✅ Claimed! Your deal channel is <#${dealChannel.id}>.\nClick **Process Claim** there to verify your Seller ID and start photo upload.`,
+        { ephemeral: true }
       );
     }
 
-    // 3) Process claim -> verify seller (and enforce only claimed seller)
+    // 3) Process claim -> verify seller
     if (interaction.isButton() && interaction.customId === "member_wtb_start_claim") {
       const channelId = interaction.channel?.id;
       if (!channelId) return;
+
+      // ✅ ACK quickly (prevents "interaction failed" on cold starts)
+      await safeDefer(interaction, { ephemeral: true }).catch(() => null);
 
       let data = sellerMap.get(channelId);
 
@@ -683,7 +682,7 @@ export function registerMemberWtbClaimFlow(client) {
             .firstPage();
 
           if (!recs.length) {
-            return interaction.reply({ content: "❌ Could not find the linked Member WTB record for this channel.", flags: MessageFlags.Ephemeral });
+            return safeReply(interaction, "❌ Could not find the linked Member WTB record for this channel.", { ephemeral: true });
           }
 
           const rec = recs[0];
@@ -703,18 +702,16 @@ export function registerMemberWtbClaimFlow(client) {
           sellerMap.set(channelId, data);
         }
 
-        // ✅ enforce only claimed seller
         if (data?.sellerDiscordId && interaction.user.id !== String(data.sellerDiscordId)) {
-          return interaction.reply({ content: "❌ Only the claimed seller can process this claim.", flags: MessageFlags.Ephemeral });
+          return safeReply(interaction, "❌ Only the claimed seller can process this claim.", { ephemeral: true });
         }
 
         if (!data?.sellerRecordId) {
-          return interaction.reply({
-            content:
-              `❌ No linked Seller record found.\n` +
-              `Check Airtable field **"${FIELD_CLAIMED_SELLER}"** is a LINKED RECORD to Sellers Database and gets filled on claim.`,
-            flags: MessageFlags.Ephemeral
-          });
+          return safeReply(
+            interaction,
+            `❌ No linked Seller record found.\nCheck Airtable field **"${FIELD_CLAIMED_SELLER}"** is a LINKED RECORD to Sellers Database and gets filled on claim.`,
+            { ephemeral: true }
+          );
         }
 
         const sellerRecord = await base(SELLERS_TABLE).find(data.sellerRecordId);
@@ -726,13 +723,17 @@ export function registerMemberWtbClaimFlow(client) {
           new ButtonBuilder().setCustomId("member_wtb_reject_seller").setLabel("❌ No, not me").setStyle(ButtonStyle.Danger)
         );
 
-        return interaction.reply({
-          content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
-          components: [confirmRow]
-        });
+        return safeReply(
+          interaction,
+          {
+            content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
+            components: [confirmRow]
+          },
+          { ephemeral: false } // not ephemeral in channel reply; change to true if you prefer
+        );
       } catch (err) {
         console.error("member_wtb_start_claim failed:", err);
-        return interaction.reply({ content: "❌ Something went wrong while verifying your Seller ID. Try again or contact staff.", flags: MessageFlags.Ephemeral });
+        return safeReply(interaction, "❌ Something went wrong while verifying your Seller ID. Try again or contact staff.", { ephemeral: true });
       }
     }
 
@@ -751,8 +752,7 @@ export function registerMemberWtbClaimFlow(client) {
       }
 
       await safeEditMessage(interaction.message, {
-        content:
-          '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it is in-hand and complete.',
+        content: '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it is in-hand and complete.',
         components: []
       });
 
@@ -775,18 +775,17 @@ export function registerMemberWtbClaimFlow(client) {
 
     // 5) Cancel deal -> reset airtable + re-enable listing + delete channel
     if (interaction.isButton() && interaction.customId === "member_wtb_cancel_deal") {
-      // ✅ Admin-only cancel (prevents seller flaking)
       const memberRoles = interaction.member?.roles?.cache?.map((r) => r.id) || [];
       const isAdmin = ADMIN_ROLE_IDS.length ? ADMIN_ROLE_IDS.some((id) => memberRoles.includes(id)) : true;
-    
+
       if (!isAdmin) {
         return interaction.reply({
           content: "❌ Only staff can cancel a deal. Please tag an admin if something is wrong.",
           flags: MessageFlags.Ephemeral
         });
       }
-      
-      const ok = await safeDeferEphemeral(interaction);
+
+      const ok = await safeDefer(interaction, { ephemeral: true });
       if (!ok) return;
 
       let data = sellerMap.get(interaction.channel?.id);
@@ -796,7 +795,7 @@ export function registerMemberWtbClaimFlow(client) {
           .select({ filterByFormula: `{${FIELD_CLAIMED_CHANNEL_ID}} = "${interaction.channel.id}"`, maxRecords: 1 })
           .firstPage();
 
-        if (!recs.length) return safeReplyEphemeral(interaction, "❌ Missing recordId.");
+        if (!recs.length) return safeReply(interaction, "❌ Missing recordId.", { ephemeral: true });
         data = { ...(data || {}), recordId: recs[0].id };
         sellerMap.set(interaction.channel.id, data);
       }
@@ -842,7 +841,7 @@ export function registerMemberWtbClaimFlow(client) {
         [FIELD_PAYMENT_PROOF]: ""
       });
 
-      await safeReplyEphemeral(interaction, "✅ Cancelled. Channel will be deleted.");
+      await safeReply(interaction, "✅ Cancelled. Channel will be deleted.", { ephemeral: true });
       setTimeout(() => interaction.channel?.delete().catch(() => {}), 2500);
       return;
     }
@@ -856,50 +855,38 @@ export function registerMemberWtbClaimFlow(client) {
         return interaction.reply({ content: "❌ Not authorized.", flags: MessageFlags.Ephemeral });
       }
 
-      const ok = await safeDeferEphemeral(interaction);
+      const ok = await safeDefer(interaction, { ephemeral: true });
       if (!ok) return;
 
       const channelId = interaction.channel?.id;
       const data = sellerMap.get(channelId);
-      if (!data?.recordId) return safeReplyEphemeral(interaction, "❌ Missing recordId for this deal.");
+      if (!data?.recordId) return safeReply(interaction, "❌ Missing recordId for this deal.", { ephemeral: true });
 
       let rec;
       try {
         rec = await base(WTB_TABLE).find(data.recordId);
       } catch (e) {
         console.error("Could not load Member WTB record:", e);
-        return safeReplyEphemeral(interaction, "❌ Could not load Airtable record.");
+        return safeReply(interaction, "❌ Could not load Airtable record.", { ephemeral: true });
       }
 
-      // Pull product bits
       const sku = String(rec.get("SKU (API)") || rec.get("SKU") || "").trim();
       const size = String(rec.get("Size") || "").trim();
       const brand = getBrandText(rec.get("Brand"));
-      
-      // Optional imageUrl (from Airtable attachment field)
+
       const pic = rec.get(FIELD_PICTURE);
-      const imageUrl =
-        Array.isArray(pic) && pic.length && pic[0]?.url ? pic[0].url : "";
-      
-      // Optional product name (if you have a dedicated field, use that instead)
+      const imageUrl = Array.isArray(pic) && pic.length && pic[0]?.url ? pic[0].url : "";
+
       const productName =
         String(rec.get("Product Name") || "").trim() ||
         [brand, sku].filter(Boolean).join(" ").trim();
-      
-      // If Make expects payout, send locked payout there
+
       const payout = Number(data.lockedPayout || 0);
-      
-      // If Make expects sellerCode, send your Seller ID format (SE-xxxxx)
       const sellerCode = String(data.sellerId || "").trim();
-      
-      // If Make expects discordUserId, send seller discord id
       const discordUserId = String(data.sellerDiscordId || "").trim();
-      
-      // If you have an orderId field in Airtable, pass it. Otherwise blank.
       const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
-      
+
       const payload = {
-        // ✅ keys Make expects (from your screenshot)
         orderId,
         productName,
         sku,
@@ -910,8 +897,7 @@ export function registerMemberWtbClaimFlow(client) {
         discordUserId,
         imageUrl,
         vatType: String(data.vatType || "").trim(),
-      
-        // keep your existing useful fields too (optional but recommended)
+
         source: "Member WTB",
         recordId: data.recordId,
         dealChannelId: channelId,
@@ -922,22 +908,16 @@ export function registerMemberWtbClaimFlow(client) {
         claimMessageUrl: String(rec.get(FIELD_CLAIM_MESSAGE_URL) || "").trim()
       };
 
-
-      // DM buyer: require payment proof first, then unlock Upload Label
+      // DM buyer
       let dmOk = false;
-      
+
       try {
         const buyerDiscordId = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         const buyerCountry = firstText(rec.get(FIELD_BUYER_COUNTRY));
         const buyerVatId = firstText(rec.get(FIELD_BUYER_VAT_ID));
         const buyerPrice = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE));
         const buyerPriceVat0 = toNumber(rec.get(FIELD_LOCKED_BUYER_PRICE_VAT0));
-      
-        const orderId = String(rec.get("Member WTB ID") || rec.get("OrderId") || "").trim();
-        const productName =
-          String(rec.get("Product Name") || "").trim() ||
-          [brand, sku].filter(Boolean).join(" ").trim();
-      
+
         if (buyerDiscordId && (buyerPrice != null || buyerPriceVat0 != null)) {
           const finalAmount = computeBuyerCharge({
             sellerVatType: data.vatType,
@@ -946,11 +926,11 @@ export function registerMemberWtbClaimFlow(client) {
             buyerPrice,
             buyerPriceVat0
           });
-      
+
           const iban = process.env.PAYMENT_IBAN || "";
           const paypal = process.env.PAYMENT_PAYPAL_EMAIL || "";
           const beneficiary = process.env.PAYMENT_BENEFICIARY || "Payout by Kickz Caviar";
-      
+
           const embed = new EmbedBuilder()
             .setTitle("✅ Your WTB has been matched")
             .setColor(0xffed00)
@@ -962,7 +942,7 @@ export function registerMemberWtbClaimFlow(client) {
               { name: "Size", value: size || "—", inline: true },
               { name: "Amount to pay (before shipping)", value: `€${Number(finalAmount || 0).toFixed(2)}`, inline: false }
             );
-      
+
           const paymentLines = [
             ...(iban ? [`• **IBAN:** ${iban} (${beneficiary})`] : []),
             ...(paypal ? [`• **PayPal:** ${paypal}`] : [])
@@ -970,7 +950,7 @@ export function registerMemberWtbClaimFlow(client) {
           if (paymentLines.length) {
             embed.addFields({ name: "Payment method", value: paymentLines.join("\n"), inline: false });
           }
-      
+
           embed.addFields({
             name: "Next steps",
             value:
@@ -980,12 +960,12 @@ export function registerMemberWtbClaimFlow(client) {
               `4) Then drop the UPS label PDF/image in the chat.`,
             inline: false
           });
-      
+
           const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${data.recordId}`)
               .setLabel("Upload Payment Proof")
-              .setStyle(ButtonStyle.Primary), // (Primary = blurple; can't be yellow)
+              .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
               .setCustomId(`${BTN_UPLOAD_LABEL}:${data.recordId}`)
               .setLabel("Upload Label")
@@ -993,19 +973,16 @@ export function registerMemberWtbClaimFlow(client) {
               .setDisabled(true)
           );
 
-      
           const dmMsg = await safeSendDM(client, buyerDiscordId, { embeds: [embed], components: [row] });
-      
+
           dmOk = !!dmMsg;
-      
+
           if (dmOk) {
-            // ✅ store DM messageId ONLY (do NOT start a payment session yet)
             buyerDmMsgMap.set(dmKey(buyerDiscordId, data.recordId), {
               messageId: dmMsg.id,
               channelId: dmMsg.channel.id
             });
 
-          
             await base(WTB_TABLE).update(data.recordId, {
               [FIELD_BUYER_PAYMENT_REQUESTED_AT]: new Date().toISOString()
             }).catch(() => {});
@@ -1015,8 +992,7 @@ export function registerMemberWtbClaimFlow(client) {
         console.warn("Buyer DM step failed:", e?.message || e);
       }
 
-
-      // ✅ Fix UX: disable the confirm button + post visible channel message
+      // disable confirm button etc
       try {
         const disabledRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("member_wtb_confirm_deal").setLabel("Confirm Deal").setStyle(ButtonStyle.Success).setDisabled(true)
@@ -1025,38 +1001,44 @@ export function registerMemberWtbClaimFlow(client) {
       } catch (_) {}
 
       try {
-        await interaction.channel.send(
-          `✅ **Deal confirmed.** Buyer has been notified for label upload${dmOk ? "" : " (DM failed)"}.`
-        );
+        await interaction.channel.send(`✅ **Deal confirmed.** Buyer has been notified for label upload${dmOk ? "" : " (DM failed)"}.`);
       } catch (_) {}
 
       sellerMap.set(channelId, { ...data, dealConfirmed: true });
 
-      return safeReplyEphemeral(interaction, "✅ Done. Buyer DM step executed.");
+      return safeReply(interaction, "✅ Done. Buyer DM step executed.", { ephemeral: true });
     }
 
-    // 7A) Buyer DM: click Upload Payment Proof -> start 5-min proof session
+    /**
+     * ✅ FIXED: Buyer DM: click Upload Payment Proof
+     * - ACK immediately (deferReply) to avoid timeouts on cold starts
+     * - No ephemeral flags in DMs
+     */
     if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_PAYMENT_PROOF}:`)) {
       if (interaction.inGuild()) {
         return interaction.reply({ content: "❌ Please use this in DM.", flags: MessageFlags.Ephemeral });
       }
-    
+
+      const ok = await safeDefer(interaction, { ephemeral: false }); // DM
+      if (!ok) return;
+
       const recordId = String(interaction.customId).split(":")[1];
       const buyerDiscordId = interaction.user.id;
-    
+
       let rec;
       try {
         rec = await base(WTB_TABLE).find(recordId);
-      } catch (_) {
-        return interaction.reply({ content: "❌ Invalid deal reference.", flags: MessageFlags.Ephemeral });
+      } catch (e) {
+        console.error("Airtable find failed (payment proof):", e);
+        return safeReply(interaction, "❌ Invalid deal reference (could not load deal).", { ephemeral: false });
       }
-    
+
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
-        return interaction.reply({ content: "❌ You are not authorized for this deal.", flags: MessageFlags.Ephemeral });
+        return safeReply(interaction, "❌ You are not authorized for this deal.", { ephemeral: false });
       }
-    
-      // ✅ If payment proof already exists, unlock Upload Label button immediately
+
+      // If proof already exists, unlock label button immediately
       const proof = rec.get(FIELD_PAYMENT_PROOF);
       const hasProof = Array.isArray(proof) && proof.length;
       if (hasProof) {
@@ -1075,54 +1057,52 @@ export function registerMemberWtbClaimFlow(client) {
           );
           await interaction.message.edit({ components: [row] }).catch(() => {});
         } catch (_) {}
-    
-        return interaction.reply({
-          content: "✅ Payment proof already received. You can now click **Upload Label**.",
-          flags: MessageFlags.Ephemeral
-        });
+
+        return safeReply(interaction, "✅ Payment proof already received. You can now click **Upload Label**.", { ephemeral: false });
       }
-    
-      // ✅ Block if a LABEL session for this same order is active (prevents mixing steps)
+
+      // Block if a LABEL session for this same order is active
       const existingLabel = getPendingLabelSession(buyerDiscordId, recordId);
       if (existingLabel) {
-        return interaction.reply({
-          content: "⚠️ You already started **Upload Label** for this order. Please finish it first (or wait 5 minutes).",
-          flags: MessageFlags.Ephemeral
-        });
+        return safeReply(
+          interaction,
+          "⚠️ You already started **Upload Label** for this order. Please finish it first (or wait 5 minutes).",
+          { ephemeral: false }
+        );
       }
-    
-      // ✅ Block any other active PAYMENT session for this buyer (OTHER orders only)
+
+      // Block any other active PAYMENT session for this buyer (other orders)
       for (const s of pendingBuyerPaymentMap.values()) {
-        if (
-          s.buyerDiscordId === buyerDiscordId &&
-          s.recordId !== recordId &&
-          nowMs() <= s.expiresAt
-        ) {
-          return interaction.reply({
-            content: "⚠️ You already have an active **Payment Proof** session for another order. Please finish it first (or wait 5 minutes).",
-            flags: MessageFlags.Ephemeral
-          });
+        if (s.buyerDiscordId === buyerDiscordId && s.recordId !== recordId && nowMs() <= s.expiresAt) {
+          return safeReply(
+            interaction,
+            "⚠️ You already have an active **Payment Proof** session for another order. Please finish it first (or wait 5 minutes).",
+            { ephemeral: false }
+          );
         }
       }
-    
-      // ✅ Start/refresh proof session for THIS order (keep messageId so we can edit the DM buttons later)
+
+      // Start/refresh payment proof session
       const stored = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId));
-      
       setPendingPaymentSession({
         buyerDiscordId,
         recordId,
         messageId: stored?.messageId || interaction.message?.id || "",
         channelId: stored?.channelId || interaction.channelId || ""
       });
-      
 
-      return interaction.reply({
-        content: "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
-        flags: MessageFlags.Ephemeral
-      });
+      return safeReply(
+        interaction,
+        "✅ Session started. Please upload your **payment proof** (image/PDF) in this DM within **5 minutes**.",
+        { ephemeral: false }
+      );
     }
 
-    // 7) Buyer DM: click Upload Label -> modal for tracking
+    /**
+     * ✅ FIXED: Buyer DM: click Upload Label
+     * IMPORTANT: showModal must be called quickly; do NOT do Airtable calls here.
+     * We moved all Airtable checks to the modal submit handler.
+     */
     if (interaction.isButton() && String(interaction.customId || "").startsWith(`${BTN_UPLOAD_LABEL}:`)) {
       if (interaction.inGuild()) {
         return interaction.reply({ content: "❌ Please use this in DM.", flags: MessageFlags.Ephemeral });
@@ -1131,78 +1111,19 @@ export function registerMemberWtbClaimFlow(client) {
       const recordId = String(interaction.customId).split(":")[1];
       const buyerDiscordId = interaction.user.id;
 
-      let rec;
-      try {
-        rec = await base(WTB_TABLE).find(recordId);
-      } catch (_) {
-        return interaction.reply({ content: "❌ Invalid deal reference.", flags: MessageFlags.Ephemeral });
-      }
-
-      // ✅ BLOCK if label already received
-      const existingLabel = rec.get(FIELD_SHIPPING_LABEL);
-      const hasLabelAlready = Array.isArray(existingLabel) && existingLabel.length;
-      if (hasLabelAlready) {
-        return interaction.reply({
-          content: "✅ We already received your shipping label for this order.",
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-
-      const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
-      if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
-        return interaction.reply({ content: "❌ You are not authorized to upload a label for this deal.", flags: MessageFlags.Ephemeral });
-      }
-
-      // Must have payment proof first
-      const proof = rec.get(FIELD_PAYMENT_PROOF);
-      const hasProof = Array.isArray(proof) && proof.length;
-      if (!hasProof) {
-        return interaction.reply({
-          content: "❌ Please upload **payment proof** first using **Upload Payment Proof**.",
-          flags: MessageFlags.Ephemeral
-        });
-      }
-      
-      // ✅ Block only if they are still in a PAYMENT PROOF session for this record
-      if (getPendingPaymentSession(buyerDiscordId, recordId)) {
-        return interaction.reply({
-          content: "⚠️ Please finish the **Payment Proof** upload first (or wait 5 minutes).",
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-
-
+      // Save DM buttons message location for later steps
       const session = getPendingLabelSession(buyerDiscordId, recordId);
-
-      // ✅ Prefer stored "buttons message" (from the DM we sent on confirm deal)
-      const stored = buyerDmMsgMap.get(dmKey(buyerDiscordId, recordId));
-      
-      const resolvedMessageId =
-        stored?.messageId ||
-        session?.messageId ||
-        interaction.message?.id ||
-        "";
-      
-      const resolvedChannelId =
-        stored?.channelId ||
-        session?.channelId ||
-        interaction.channelId ||
-        "";
-      
-      // Always ensure we store the DM message info (this is the buttons message)
       setPendingLabelSession({
         buyerDiscordId,
         recordId,
         tracking: session?.tracking || "",
-        messageId: resolvedMessageId,
-        channelId: resolvedChannelId
+        messageId: session?.messageId || interaction.message?.id || "",
+        channelId: session?.channelId || interaction.channelId || ""
       });
 
-
-
-      const modal = new ModalBuilder().setCustomId(`${MODAL_UPLOAD_LABEL}:${recordId}`).setTitle("Upload UPS Label");
+      const modal = new ModalBuilder()
+        .setCustomId(`${MODAL_UPLOAD_LABEL}:${recordId}`)
+        .setTitle("Upload UPS Label");
 
       const trackingInput = new TextInputBuilder()
         .setCustomId("tracking")
@@ -1221,38 +1142,75 @@ export function registerMemberWtbClaimFlow(client) {
       return;
     }
 
-    // 8) Buyer DM: modal submit -> save tracking in session, ask for file upload
+    /**
+     * ✅ FIXED: Buyer DM: modal submit
+     * - DM-safe defer/reply (no ephemeral in DMs)
+     * - Airtable checks moved here (instead of button click)
+     */
     if (interaction.isModalSubmit() && String(interaction.customId || "").startsWith(`${MODAL_UPLOAD_LABEL}:`)) {
-      const ok = await safeDeferEphemeral(interaction);
-      if (!ok) return;
+      if (interaction.inGuild()) {
+        // if someone manages to open it in guild, reply ephemeral
+        const ok = await safeDefer(interaction, { ephemeral: true });
+        if (!ok) return;
+        return safeReply(interaction, "❌ Please do this in DM.", { ephemeral: true });
+      }
 
-      if (interaction.inGuild()) return safeReplyEphemeral(interaction, "❌ Please do this in DM.");
+      const ok = await safeDefer(interaction, { ephemeral: false }); // DM
+      if (!ok) return;
 
       const recordId = String(interaction.customId).split(":")[1];
       const buyerDiscordId = interaction.user.id;
 
       const tracking = String(interaction.fields.getTextInputValue("tracking") || "").trim().toUpperCase();
       if (!tracking.startsWith("1Z")) {
-        return safeReplyEphemeral(interaction, '❌ Invalid UPS tracking. It must start with **"1Z"**.');
+        return safeReply(interaction, '❌ Invalid UPS tracking. It must start with **"1Z"**.', { ephemeral: false });
       }
 
       let rec;
       try {
         rec = await base(WTB_TABLE).find(recordId);
-      } catch (_) {
-        return safeReplyEphemeral(interaction, "❌ Invalid deal reference.");
+      } catch (e) {
+        console.error("Airtable find failed (label modal):", e);
+        return safeReply(interaction, "❌ Invalid deal reference (could not load deal).", { ephemeral: false });
       }
 
-      // Update the existing label session and keep the DM buttons message info
-     const prev = getPendingLabelSession(buyerDiscordId, recordId);
+      // ✅ BLOCK if label already received
+      const existingLabel = rec.get(FIELD_SHIPPING_LABEL);
+      const hasLabelAlready = Array.isArray(existingLabel) && existingLabel.length;
+      if (hasLabelAlready) {
+        return safeReply(interaction, "✅ We already received your shipping label for this order.", { ephemeral: false });
+      }
+
+      // ✅ Authorization
+      const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
+      if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
+        return safeReply(interaction, "❌ You are not authorized to upload a label for this deal.", { ephemeral: false });
+      }
+
+      // ✅ Must have payment proof first
+      const proof = rec.get(FIELD_PAYMENT_PROOF);
+      const hasProof = Array.isArray(proof) && proof.length;
+      if (!hasProof) {
+        return safeReply(interaction, "❌ Please upload **payment proof** first using **Upload Payment Proof**.", { ephemeral: false });
+      }
+
+      // ✅ Block if they are still in a PAYMENT PROOF session for this record
+      if (getPendingPaymentSession(buyerDiscordId, recordId)) {
+        return safeReply(interaction, "⚠️ Please finish the **Payment Proof** upload first (or wait 5 minutes).", { ephemeral: false });
+      }
+
+      // Find stored label session to get DM buttons message info
+      const prev = getPendingLabelSession(buyerDiscordId, recordId);
 
       if (!prev?.messageId || !prev?.channelId) {
-        return safeReplyEphemeral(
+        return safeReply(
           interaction,
-          "❌ Could not locate the buttons message. Please click **Upload Label** again from the buttons message."
+          "❌ Could not locate the buttons message. Please click **Upload Label** again from the buttons message.",
+          { ephemeral: false }
         );
       }
-      
+
+      // Update session with tracking (keep messageId/channelId)
       setPendingLabelSession({
         buyerDiscordId,
         recordId,
@@ -1260,21 +1218,24 @@ export function registerMemberWtbClaimFlow(client) {
         messageId: prev.messageId,
         channelId: prev.channelId
       });
-      
+
       const jumpRow = dmJumpRow(prev.channelId, prev.messageId);
-      
-      return safeReplyEphemeral(interaction, {
-        content: "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.",
-        components: jumpRow ? [jumpRow] : []
-      });
+
+      return safeReply(
+        interaction,
+        {
+          content: "✅ Tracking saved. Now drop the **label file** (PDF/image) below in the chat.",
+          components: jumpRow ? [jumpRow] : []
+        },
+        { ephemeral: false }
+      );
     }
   });
 
-  // 9) MessageCreate: count seller photos (guild) + capture buyer label file (DM)
+  // 9) MessageCreate: count seller photos (guild) + capture buyer label/proof file (DM)
   client.on(Events.MessageCreate, async (message) => {
     if (message.author?.bot) return;
 
-    // ✅ DEBUG LOG (leave it until everything is stable)
     console.log("[MessageCreate]", {
       inGuild: message.inGuild(),
       author: message.author?.id,
@@ -1282,7 +1243,7 @@ export function registerMemberWtbClaimFlow(client) {
       attachments: message.attachments?.size || 0
     });
 
-    // -------- Buyer DM label upload capture --------
+    // -------- Buyer DM label/payment proof upload capture --------
     if (!message.inGuild()) {
       if (!message.attachments?.size) return;
 
@@ -1297,9 +1258,8 @@ export function registerMemberWtbClaimFlow(client) {
         await message.channel.send("❌ File must be a **PDF or image**.");
         return;
       }
-      
+
       // 1) PAYMENT PROOF SESSION?
-      // Find any active proof session for this buyer (we only allow 1 per record anyway)
       let activePay = null;
       for (const s of pendingBuyerPaymentMap.values()) {
         if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) {
@@ -1307,7 +1267,7 @@ export function registerMemberWtbClaimFlow(client) {
           break;
         }
       }
-      
+
       if (activePay) {
         const rec = await base(WTB_TABLE).find(activePay.recordId).catch(() => null);
         if (!rec) {
@@ -1316,7 +1276,7 @@ export function registerMemberWtbClaimFlow(client) {
           await message.channel.send("❌ Could not find your deal anymore.");
           return;
         }
-      
+
         const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
         if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
           clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
@@ -1325,24 +1285,23 @@ export function registerMemberWtbClaimFlow(client) {
           return;
         }
 
-      
         // Save proof
         await base(WTB_TABLE).update(activePay.recordId, {
           [FIELD_PAYMENT_PROOF]: [{ url: att.url, filename: att.name || "payment-proof" }]
         });
-      
-        // Enable Upload Label button by editing the original DM message (fetch by stored channelId)
+
+        // Enable Upload Label button by editing the original DM message
         try {
           const dmMsgId = activePay.messageId;
           const dmChannelId = activePay.channelId;
-        
+
           if (dmMsgId && dmChannelId) {
             const dmChannel = await client.channels.fetch(dmChannelId).catch(() => null);
             if (dmChannel?.isTextBased()) {
               const dmMsg = await dmChannel.messages.fetch(dmMsgId).catch(() => null);
               if (dmMsg) {
                 const recordId = activePay.recordId;
-        
+
                 const row = new ActionRowBuilder().addComponents(
                   new ButtonBuilder()
                     .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
@@ -1355,7 +1314,7 @@ export function registerMemberWtbClaimFlow(client) {
                     .setStyle(ButtonStyle.Success)
                     .setDisabled(false)
                 );
-        
+
                 await dmMsg.edit({ components: [row] });
               }
             }
@@ -1364,11 +1323,9 @@ export function registerMemberWtbClaimFlow(client) {
           console.warn("Failed enabling label button:", e?.message || e);
         }
 
-      
         clearPendingPaymentSession(buyerDiscordId, activePay.recordId);
-        // ✅ DO NOT delete buyerDmMsgMap here — we still need it for the label step
-        const jumpRow = dmJumpRow(activePay.channelId || message.channel.id, activePay.messageId);
 
+        const jumpRow = dmJumpRow(activePay.channelId || message.channel.id, activePay.messageId);
 
         await message.channel.send({
           content: "✅ Payment proof received. You can now click **Upload Label**.",
@@ -1376,12 +1333,8 @@ export function registerMemberWtbClaimFlow(client) {
         });
         return;
       }
-      
+
       // 2) LABEL SESSION?
-      // (your existing label logic can continue here)
-
-
-      // pick latest valid session for this buyer
       const sessions = [];
       for (const s of pendingBuyerLabelMap.values()) {
         if (s.buyerDiscordId === buyerDiscordId && nowMs() <= s.expiresAt) sessions.push(s);
@@ -1390,28 +1343,17 @@ export function registerMemberWtbClaimFlow(client) {
         await message.channel.send("❌ No active upload session found. Please click **Upload Label** first.");
         return;
       }
-      
+
       if (sessions.length > 1) {
-        // ✅ cleanup: keep only the newest session, delete the others
         sessions.sort((a, b) => b.createdAt - a.createdAt);
-        // keep newest
-      
         for (const s of sessions.slice(1)) {
           clearPendingLabelSession(s.buyerDiscordId, s.recordId);
         }
-      
-        await message.channel.send(
-          "⚠️ You had multiple active label sessions. I kept the newest one. Please upload the label file again now."
-        );
-      
-        // continue with the newest session
+        await message.channel.send("⚠️ You had multiple active label sessions. I kept the newest one. Please upload the label file again now.");
       }
 
-      
       sessions.sort((a, b) => b.createdAt - a.createdAt);
       const pending = sessions[0];
-
-
 
       if (!pending.tracking) {
         await message.channel.send("❌ Please click **Upload Label** first and submit the tracking number.");
@@ -1428,7 +1370,6 @@ export function registerMemberWtbClaimFlow(client) {
         return;
       }
 
-      // ✅ detect if label already existed BEFORE we overwrite it
       const existingLabelBefore = rec.get(FIELD_SHIPPING_LABEL);
       const alreadyHadLabel = Array.isArray(existingLabelBefore) && existingLabelBefore.length;
       console.log("[Label] pre-check", {
@@ -1436,8 +1377,6 @@ export function registerMemberWtbClaimFlow(client) {
         alreadyHadLabel,
         existingLabelCount: Array.isArray(existingLabelBefore) ? existingLabelBefore.length : 0
       });
-
-
 
       const buyerFromAirtable = firstText(rec.get(FIELD_BUYER_DISCORD_ID));
       if (!buyerFromAirtable || buyerFromAirtable !== buyerDiscordId) {
@@ -1447,25 +1386,24 @@ export function registerMemberWtbClaimFlow(client) {
         return;
       }
 
-
       try {
         await base(WTB_TABLE).update(pending.recordId, {
           [FIELD_TRACKING_NUMBER]: pending.tracking,
           [FIELD_SHIPPING_LABEL]: [{ url: att.url, filename: att.name || "label.pdf" }]
         });
 
-        // ✅ Disable DM buttons after label received (so user can't spam Upload Label)
+        // Disable DM buttons after label received
         try {
           const dmMsgId = pending.messageId;
           const dmChannelId = pending.channelId;
-        
+
           if (dmMsgId && dmChannelId) {
             const dmChannel = await client.channels.fetch(dmChannelId).catch(() => null);
             if (dmChannel?.isTextBased()) {
               const dmMsg = await dmChannel.messages.fetch(dmMsgId).catch(() => null);
               if (dmMsg) {
                 const recordId = pending.recordId;
-        
+
                 const row = new ActionRowBuilder().addComponents(
                   new ButtonBuilder()
                     .setCustomId(`${BTN_UPLOAD_PAYMENT_PROOF}:${recordId}`)
@@ -1478,7 +1416,7 @@ export function registerMemberWtbClaimFlow(client) {
                     .setStyle(ButtonStyle.Success)
                     .setDisabled(true)
                 );
-        
+
                 await dmMsg.edit({ components: [row] });
               }
             }
@@ -1487,8 +1425,7 @@ export function registerMemberWtbClaimFlow(client) {
           console.warn("Failed disabling DM buttons after label:", e?.message || e);
         }
 
-
-        // ✅ Send Make webhook ONLY once (first label upload)
+        // Send Make webhook ONLY once (first label upload)
         if (!alreadyHadLabel) {
           try {
             const payload = await buildMakePayload({ recordId: pending.recordId, client });
@@ -1498,8 +1435,7 @@ export function registerMemberWtbClaimFlow(client) {
               alreadyHadLabel,
               urlSet: !!MAKE_MEMBER_WTB_WEBHOOK_URL
             });
-            
-                        
+
             await fireMakeWebhook("label_uploaded", {
               ...payload,
               trackingNumber: pending.tracking,
@@ -1511,12 +1447,8 @@ export function registerMemberWtbClaimFlow(client) {
           }
         }
 
-
-
         clearPendingLabelSession(buyerDiscordId, pending.recordId);
-        // ✅ Now we can forget the DM buttons message for this order (flow finished)
         buyerDmMsgMap.delete(dmKey(buyerDiscordId, pending.recordId));
-
 
         await message.channel.send(`✅ Label saved.\n• Tracking: **${pending.tracking}**`);
 
@@ -1529,13 +1461,10 @@ export function registerMemberWtbClaimFlow(client) {
               content:
                 `📦 **Shipping label received**\n` +
                 `• Tracking: **${pending.tracking}**\n\n` +
-            
                 `📬\n` +
                 `Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings. **REMOVE ANY PRICETAGS!**\n\n` +
-            
                 `❌\n` +
                 `Do not include anything inside the box, as this is not a standard deal.\n\n` +
-            
                 `📸\n` +
                 `Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`,
               files: [{ attachment: att.url, name: att.name || "label.pdf" }]
